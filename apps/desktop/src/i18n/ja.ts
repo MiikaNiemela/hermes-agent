@@ -3273,6 +3273,8 @@ export const jaOverrides = {
     layoutNamePlaceholder: fallback => `レイアウト名（${fallback}）`,
     saveApply: '保存して適用',
     notExpressible: 'この配置は互いに噛み合っています（風車型）— 入れ子の分割では表現できません',
+    placeholderTitle: '空のゾーン',
+    placeholderHint: 'ここにパネルをドラッグします。このタブを閉じるとゾーンが削除されます。',
     zoneCount: count => `${count} ゾーン`,
     tabCount: count => `${count} 個のタブ`,
     tabActions: title => `${title} の操作`

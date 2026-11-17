@@ -4445,6 +4445,8 @@ export const en: Translations = {
     layoutNamePlaceholder: fallback => `Layout name (${fallback})`,
     saveApply: 'Save & apply',
     notExpressible: 'this arrangement interlocks (pinwheel) — not expressible as nested splits yet',
+    placeholderTitle: 'Empty zone',
+    placeholderHint: 'Drag a panel here. Close this tab to remove the zone.',
     zoneCount: count => `${count} zones`,
     tabCount: count => `${count} tab${count === 1 ? '' : 's'}`,
     tabActions: title => `Actions for ${title}`

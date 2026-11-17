@@ -8,7 +8,8 @@
  *  - DRAG across zones to rubber-band select; the selection expands to its
  *    rectangular closure (ComputeClosure) and a Merge button appears.
  *  - Shared zone edges are draggable resizer thumbs (multi-zone edges move
- *    together, min-size clamped) — GridData.Drag semantics.
+ *    together, min-size clamped) — GridData.Drag semantics, except that runs
+ *    break at `+` crossings so rows inside each column resize independently.
  *  - Templates: Columns / Rows / Grid / Priority with a zone-count stepper.
  *
  * Saving converts the grid to our runtime layout tree (guillotine cuts) and
@@ -22,17 +23,21 @@ import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef,
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { registry } from '@/contrib/registry'
 import { useI18n } from '@/i18n'
 import { ESCAPE_PRIORITY, isTopEscapeLayer, pushEscapeLayer } from '@/lib/escape-layers'
 import { startPointerDrag } from '@/lib/pointer-drag'
 import { rafCoalesce } from '@/lib/raf-coalesce'
 import { cn } from '@/lib/utils'
 
+import { layoutTreeFromGrid } from './editor-layout'
 import {
   canSplit,
+  clampDragDelta,
+  collapseResizer,
+  collapseTarget,
   doMerge,
   dragResizer,
+  findResizerIndex,
   type GridLayout,
   type GridResizer,
   type GridZone,
@@ -44,12 +49,11 @@ import {
   modelToResizers,
   modelToZones,
   MULTIPLIER,
+  resizerKey,
   splitZone
 } from './grid-model'
-import { gridIsTreeExpressible, gridToTree, type PanePlacementHint } from './grid-to-tree'
-import { allPaneIds } from './model'
+import { gridIsTreeExpressible } from './grid-to-tree'
 import { applyLayoutPreset, saveLayoutPresetTree } from './presets'
-import { $layoutTree } from './store'
 
 export const $zoneEditorOpen = atom(false)
 
@@ -111,6 +115,8 @@ export function ZoneEditor() {
   const [selectBox, setSelectBox] = useState<SelectBox | null>(null)
   const [selection, setSelection] = useState<number[]>([])
   const [mergeAt, setMergeAt] = useState<{ x: number; y: number } | null>(null)
+  // Zones a divider drag would merge away on release (dragged onto its neighbour).
+  const [collapsing, setCollapsing] = useState<number[] | null>(null)
   const [name, setName] = useState('')
   const canvasRef = useRef<HTMLDivElement>(null)
 
@@ -174,6 +180,9 @@ export function ZoneEditor() {
   const insideRef = useRef(false)
   const lastPointRef = useRef<{ x: number; y: number } | null>(null)
   const generationRef = useRef(0)
+  // A selection or divider drag in progress: the split line belongs to a
+  // plain hover/click only, and showing it mid-drag reads as "this will split".
+  const gestureRef = useRef(false)
 
   const publishPreview = useCallback((next: SplitPreview | null) => {
     if (sameSplitPreview(previewRef.current, next)) {
@@ -187,6 +196,12 @@ export function ZoneEditor() {
   const computePreview = useCallback(
     (clientX: number, clientY: number) => {
       if (!openRef.current || !canvasRef.current) {
+        return
+      }
+
+      if (gestureRef.current) {
+        publishPreview(null)
+
         return
       }
 
@@ -284,6 +299,12 @@ export function ZoneEditor() {
         return
       }
 
+      if (!dragged) {
+        gestureRef.current = true
+        generationRef.current += 1
+        publishPreview(null)
+      }
+
       dragged = true
 
       const box = {
@@ -306,6 +327,7 @@ export function ZoneEditor() {
     startPointerDrag(onMove, ev => {
       coalesceRef.current?.finish()
       setSelectBox(null)
+      gestureRef.current = false
 
       if (!dragged) {
         // Plain click: split at the previewed line. Read the ref — Shift may
@@ -335,27 +357,70 @@ export function ZoneEditor() {
     const resizer = resizers[index]
     const horizontal = resizer.orientation === 'horizontal'
     const start = horizontal ? e.clientY : e.clientX
+    // Track the grabbed edge by the zones it separates, not by `index`: each
+    // step rebuilds the grid, and passing another row's/column's divider
+    // reorders the resizer list, so a captured index would start driving a
+    // different divider mid-drag.
+    const key = resizerKey(resizer)
     let applied = 0
+    let collapseSide: 'negative' | 'positive' | null = null
+
+    gestureRef.current = true
+    generationRef.current += 1
+    publishPreview(null)
 
     const onMove = (ev: PointerEvent) => {
       const px = (horizontal ? ev.clientY : ev.clientX) - start
       const total = Math.round((px / (horizontal ? rect.height : rect.width)) * MULTIPLIER)
-      const step = total - applied
+      let current = modelRef.current
+      let at = findResizerIndex(current, key)
+
+      if (at === -1) {
+        return
+      }
+
+      // Move as far as the minimum zone size allows (a refused whole step
+      // used to leave the divider short of the wall).
+      const step = clampDragDelta(current, at, total - applied)
 
       if (step !== 0) {
-        setModel(m => {
-          const next = dragResizer(m, index, step)
+        const next = dragResizer(current, at, step)
 
-          if (next !== m) {
-            applied = total
-          }
+        if (next !== current) {
+          applied += step
+          current = next
+          at = findResizerIndex(current, key)
+          modelRef.current = next
+          setModel(next)
+        }
+      }
 
-          return next
-        })
+      // Pointer carried on to the neighbouring divider: preview the merge.
+      const side = at === -1 ? null : collapseTarget(current, at, total - applied)
+
+      if (side !== collapseSide) {
+        collapseSide = side
+        const r = side ? modelToResizers(current)[at] : null
+        setCollapsing(r ? (side === 'positive' ? r.positiveSideIndices : r.negativeSideIndices) : null)
       }
     }
 
-    startPointerDrag(onMove)
+    startPointerDrag(onMove, () => {
+      gestureRef.current = false
+
+      if (collapseSide) {
+        const current = modelRef.current
+        const at = findResizerIndex(current, key)
+
+        if (at !== -1) {
+          const next = collapseResizer(current, at, collapseSide)
+          modelRef.current = next
+          setModel(next)
+        }
+      }
+
+      setCollapsing(null)
+    })
   }
 
   const merge = () => {
@@ -365,18 +430,9 @@ export function ZoneEditor() {
   }
 
   const save = () => {
-    const paneIds = allPaneIds($layoutTree.get() ?? { type: 'group', id: 'tmp', panes: [], active: '' })
-    // Placement hints ride on the pane contributions (`data.placement`), so
-    // zones are assigned by ROLE (main/left/right/bottom), not index order.
-    const contributions = registry.getArea('panes')
-
-    const placed = paneIds.map(id => ({
-      id,
-      placement: (contributions.find(c => c.id === id)?.data as { placement?: PanePlacementHint } | undefined)
-        ?.placement
-    }))
-
-    const tree = gridToTree(model, placed)
+    // Open panes claim zones by role; closed ones ride along off-grid and
+    // unfilled zones hold placeholders (editor-layout.ts).
+    const tree = layoutTreeFromGrid(model)
 
     if (!tree) {
       return
@@ -451,10 +507,12 @@ export function ZoneEditor() {
       >
         {zones.map(zone => {
           const selected = selection.includes(zone.index)
+          const merging = collapsing?.includes(zone.index) ?? false
 
           return (
             <div
               className="absolute flex items-center justify-center rounded-[3px] border transition-colors"
+              data-collapsing={merging || undefined}
               key={zone.index}
               style={{
                 left: pct(zone.left),
@@ -463,8 +521,12 @@ export function ZoneEditor() {
                 height: pct(zone.bottom - zone.top),
                 // Accent over an elevated base — zones stay legible on dark
                 // themes where a bare accent wash sinks into the canvas.
-                background: `color-mix(in srgb, var(--ui-accent) ${selected ? 34 : 12}%, var(--ui-bg-elevated))`,
-                borderColor: `color-mix(in srgb, var(--ui-accent) ${selected ? 90 : 40}%, transparent)`
+                background: merging
+                  ? 'color-mix(in srgb, var(--destructive) 30%, var(--ui-bg-elevated))'
+                  : `color-mix(in srgb, var(--ui-accent) ${selected ? 34 : 12}%, var(--ui-bg-elevated))`,
+                borderColor: merging
+                  ? 'var(--destructive)'
+                  : `color-mix(in srgb, var(--ui-accent) ${selected ? 90 : 40}%, transparent)`
               }}
             >
               {/* Quiet zone tag — the app's small-caps label voice, not a

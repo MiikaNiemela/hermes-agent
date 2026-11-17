@@ -4282,6 +4282,8 @@ export const zhOverrides = {
     layoutNamePlaceholder: fallback => `布局名称（${fallback}）`,
     saveApply: '保存并应用',
     notExpressible: '此排列互相咬合（风车形）——暂无法表示为嵌套拆分',
+    placeholderTitle: '空区域',
+    placeholderHint: '将面板拖到这里。关闭此标签页即可移除该区域。',
     zoneCount: count => `${count} 个区域`,
     tabCount: count => `${count} 个标签页`,
     tabActions: title => `${title} 的操作`

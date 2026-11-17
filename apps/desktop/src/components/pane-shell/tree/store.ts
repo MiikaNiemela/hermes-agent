@@ -46,6 +46,7 @@ import {
   type TabStripMode
 } from './model'
 import { isTreePaneParked } from './parked-panes'
+import { dropFilledPlaceholders, isPlaceholderPaneId } from './placeholder-ids'
 import { FLOATING_PLACEMENT } from './renderer/floating-rect'
 import { tabStripVisibleForZone } from './renderer/strip-visibility'
 
@@ -1013,6 +1014,18 @@ export function dismissTreePane(paneId: string) {
 }
 
 export function closeTreePane(paneId: string) {
+  // A placeholder is layout scaffolding, not a pane the user can bring back:
+  // closing it removes its zone, with no dismissal record to accumulate.
+  if (isPlaceholderPaneId(paneId)) {
+    const tree = $layoutTree.get()
+
+    if (tree) {
+      commit(removePane(tree, paneId))
+    }
+
+    return
+  }
+
   const closer = paneClosers[paneId]
 
   if (closer) {
@@ -1354,7 +1367,9 @@ function adoptMissingPanes(target: LayoutNode, source: LayoutNode): LayoutNode {
   let next = target
 
   for (const paneId of allPaneIds(source)) {
-    if (have.has(paneId)) {
+    // The previous layout's placeholders held ITS empty zones; they mean
+    // nothing in the new one.
+    if (have.has(paneId) || isPlaceholderPaneId(paneId)) {
       continue
     }
 
@@ -1553,7 +1568,11 @@ export function adoptContributedPanes(): void {
   // thing floating exists to avoid.
   const missing = panes.filter(
     c =>
-      !inTree.has(c.id) && !dismissed.has(c.id) && !isTreePaneParked(c.id) && placementOf(c.id) !== FLOATING_PLACEMENT
+      !inTree.has(c.id) &&
+      !dismissed.has(c.id) &&
+      !isTreePaneParked(c.id) &&
+      placementOf(c.id) !== FLOATING_PLACEMENT &&
+      !isPlaceholderPaneId(c.id)
   )
 
   if (missing.length === 0) {
@@ -1646,8 +1665,12 @@ function commit(next: LayoutNode | null) {
     return
   }
 
-  $layoutTree.set(next)
-  persist(next)
+  // A placeholder only holds an otherwise-empty zone open; once a real pane
+  // shares its zone (drop, adoption, dock) it goes.
+  const filled = dropFilledPlaceholders(next)
+
+  $layoutTree.set(filled)
+  persist(filled)
 }
 
 // ---------------------------------------------------------------------------

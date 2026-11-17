@@ -10,6 +10,7 @@ import { InlinePreviewDirective } from '@/components/assistant-ui/inline-preview
 import { IdleMount } from '@/components/idle-mount'
 import { $layoutEditMode, toggleLayoutEditMode } from '@/components/pane-shell/edit-mode'
 import { allPaneIds } from '@/components/pane-shell/tree/model'
+import { startPlaceholderPaneSync } from '@/components/pane-shell/tree/placeholder-panes'
 import { LayoutTreeRoot } from '@/components/pane-shell/tree/renderer'
 import {
   $layoutTree,
@@ -446,6 +447,9 @@ registry.registerMany([
 registerLayoutPresets()
 
 declareDefaultTree(DEFAULT_TREE, BASIC_TREE)
+// Zones a layout draws but no pane fills hold placeholder panes; keep their
+// contributions in step with the live tree so those zones render.
+startPlaceholderPaneSync()
 
 // Bundled plugins load AFTER core, so a same-id contribution from a plugin
 // deliberately overrides the core default (last writer wins). Third-party

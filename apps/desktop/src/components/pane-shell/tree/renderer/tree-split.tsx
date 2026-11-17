@@ -33,11 +33,11 @@ import {
 
 import {
   allFixedAbsorberIndex,
+  childTrackSize,
   COLLAPSED_ZONE_PX,
   computedPx,
   cssMax,
   edgeFixedZone,
-  fixedTrackSize,
   MIN_PANE_PX,
   MINIMIZED_TRACK,
   paneChrome,
@@ -162,6 +162,14 @@ export function TreeSplit({
   // cap it. Stacks aggregate clamps (largest-tenant semantics, mirroring the
   // max() track basis) — the active tab's caps must never resize the zone.
   const sizingFor = (child: LayoutNode, track: string | null): PaneSizing | null => {
+    const sizing = paneSizingFor(child, track)
+
+    // Authored proportions keep the panes' floors but not their caps: a
+    // sidebar's maxWidth would otherwise clamp the column it was drawn into.
+    return node.proportional && sizing ? { minWidth: sizing.minWidth, minHeight: sizing.minHeight } : sizing
+  }
+
+  const paneSizingFor = (child: LayoutNode, track: string | null): PaneSizing | null => {
     if (child.type !== 'group' || child.panes.length === 0) {
       return null
     }
@@ -228,7 +236,7 @@ export function TreeSplit({
       }
 
       const sideFor = (child: LayoutNode, wrapper: HTMLElement, edge: 'start' | 'end') => {
-        const fixed = fixedTrackSize(child, axis, trackCtx) !== null
+        const fixed = childTrackSize(node, child, axis, trackCtx) !== null
         const zone = fixed ? edgeFixedZone(child, edge, axis, trackCtx) : null
         const zoneEl = zone ? container.querySelector<HTMLElement>(`[data-tree-group="${zone.id}"]`) : null
         // Clamps live on the zone's split-child WRAPPER (where we render them).
@@ -592,7 +600,7 @@ export function TreeSplit({
 
         // Fixed tracks size themselves from the declared width (override
         // cleared above) — weights only matter for FLEX zones.
-        if (child.type !== 'group' || fixedTrackSize(child, axis, trackCtx) !== null) {
+        if (child.type !== 'group' || childTrackSize(node, child, axis, trackCtx) !== null) {
           continue
         }
 
@@ -669,7 +677,7 @@ export function TreeSplit({
   const tracks = node.children.map((child, i) => {
     const minimized = isMinimized(child)
     const collapsed = isCollapsed(child) || sideGone(i)
-    const track = minimized || collapsed ? null : fixedTrackSize(child, axis, trackCtx)
+    const track = minimized || collapsed ? null : childTrackSize(node, child, axis, trackCtx)
     const sizing = minimized || collapsed ? null : sizingFor(child, track)
     // Narrow-collapse UNMOUNTS (the edge overlay owns the live instance) — but
     // only for panes the breakpoint collapsed, not ones a chrome toggle hid.

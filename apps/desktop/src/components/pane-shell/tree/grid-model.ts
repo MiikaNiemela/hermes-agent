@@ -10,6 +10,8 @@
  *  - Zones are rectangles in the 0..10000 coordinate space (prefix sums).
  *  - Resizers are the shared edges between zones, derived from cellChildMap
  *    discontinuities; dragging one moves every zone touching that edge.
+ *    One deliberate deviation: a resizer run stops at a `+` crossing, so
+ *    collinear edges in different columns/rows are separate handles.
  *  - Merging computes the rectangular CLOSURE of the selection (extending it
  *    until no zone is partially cut) — the signature FancyZones merge feel.
  */
@@ -181,6 +183,22 @@ export function modelToZones(model: GridLayout): GridZone[] | null {
   return zones
 }
 
+/**
+ * True when the grid point at the top-left corner of cell (row, col) is a `+`
+ * crossing: four distinct zone edges meet there. Deviation from FancyZones:
+ * resizer runs BREAK at crossings, so collinear edges that belong to different
+ * columns (or rows) resize independently. T-junctions stay whole — one zone
+ * owns the full edge and must move as a unit.
+ */
+function isCrossing(grid: number[][], row: number, col: number): boolean {
+  const topLeft = grid[row - 1][col - 1]
+  const topRight = grid[row - 1][col]
+  const bottomLeft = grid[row][col - 1]
+  const bottomRight = grid[row][col]
+
+  return topLeft !== topRight && bottomLeft !== bottomRight && topLeft !== bottomLeft && topRight !== bottomRight
+}
+
 export function modelToResizers(model: GridLayout): GridResizer[] {
   const grid = model.cellChildMap
   const { rows, columns: cols } = model
@@ -192,7 +210,11 @@ export function modelToResizers(model: GridLayout): GridResizer[] {
       if (grid[row - 1][startCol] !== grid[row][startCol]) {
         let endCol = startCol
 
-        while (endCol + 1 < cols && grid[row - 1][endCol + 1] !== grid[row][endCol + 1]) {
+        while (
+          endCol + 1 < cols &&
+          grid[row - 1][endCol + 1] !== grid[row][endCol + 1] &&
+          !isCrossing(grid, row, endCol + 1)
+        ) {
           endCol++
         }
 
@@ -223,7 +245,11 @@ export function modelToResizers(model: GridLayout): GridResizer[] {
       if (grid[startRow][col - 1] !== grid[startRow][col]) {
         let endRow = startRow
 
-        while (endRow + 1 < rows && grid[endRow + 1][col - 1] !== grid[endRow + 1][col]) {
+        while (
+          endRow + 1 < rows &&
+          grid[endRow + 1][col - 1] !== grid[endRow + 1][col] &&
+          !isCrossing(grid, endRow + 1, col)
+        ) {
           endRow++
         }
 
@@ -426,6 +452,41 @@ export function splitZone(
 // Resizer drag (GridData.CanDrag / Drag)
 // ---------------------------------------------------------------------------
 
+/** Identity of a resizer that survives grid rebuilds: zone indices are stable
+ *  across drags (zonesToModel keeps zone order), resizer LIST POSITIONS are not —
+ *  moving an edge past another track reorders the scan. */
+export interface ResizerKey {
+  orientation: GridResizer['orientation']
+  negativeSideIndices: number[]
+  positiveSideIndices: number[]
+}
+
+const sortedIds = (ids: number[]) => [...ids].sort((a, b) => a - b)
+
+export function resizerKey(resizer: GridResizer): ResizerKey {
+  return {
+    orientation: resizer.orientation,
+    negativeSideIndices: sortedIds(resizer.negativeSideIndices),
+    positiveSideIndices: sortedIds(resizer.positiveSideIndices)
+  }
+}
+
+/** Current list index of the resizer `key` names, or -1 when it no longer exists. */
+export function findResizerIndex(model: GridLayout, key: ResizerKey): number {
+  const sameIds = (a: number[], b: number[]) => {
+    const s = sortedIds(a)
+
+    return s.length === b.length && s.every((id, i) => id === b[i])
+  }
+
+  return modelToResizers(model).findIndex(
+    r =>
+      r.orientation === key.orientation &&
+      sameIds(r.negativeSideIndices, key.negativeSideIndices) &&
+      sameIds(r.positiveSideIndices, key.positiveSideIndices)
+  )
+}
+
 export function canDrag(model: GridLayout, resizerIndex: number, delta: number): boolean {
   const zones = modelToZones(model)
   const resizers = modelToResizers(model)
@@ -485,6 +546,118 @@ export function dragResizer(model: GridLayout, resizerIndex: number, delta: numb
   }
 
   return zonesToModel(zones)
+}
+
+// ---------------------------------------------------------------------------
+// Clamp + collapse (Hermes additions: drag a divider onto its neighbour)
+// ---------------------------------------------------------------------------
+
+/** How close (model units) the pointer must come to the far edge of the zone
+ *  it is squeezing before releasing merges that zone away. */
+export const COLLAPSE_SNAP = MIN_ZONE_SIZE / 2
+
+const extentOf = (zone: GridZone, orientation: GridResizer['orientation']) =>
+  orientation === 'vertical' ? zone.right - zone.left : zone.bottom - zone.top
+
+/** The largest part of `delta` (same sign) the resizer can move without any
+ *  zone dropping below MIN_ZONE_SIZE. `dragResizer` refuses a step that would
+ *  cross the limit, so applying the clamped value lets the edge reach it. */
+export function clampDragDelta(model: GridLayout, resizerIndex: number, delta: number): number {
+  const zones = modelToZones(model)
+  const resizer = modelToResizers(model)[resizerIndex]
+
+  if (!zones || !resizer || delta === 0) {
+    return 0
+  }
+
+  const shrinking = delta > 0 ? resizer.positiveSideIndices : resizer.negativeSideIndices
+  const room = Math.min(...shrinking.map(i => extentOf(zones[i], resizer.orientation) - MIN_ZONE_SIZE))
+  const limit = Math.max(0, room)
+
+  return delta > 0 ? Math.min(delta, limit) : Math.max(delta, -limit)
+}
+
+/** Which side of the resizer a drag of `delta` squeezes away entirely (every
+ *  zone on that side within COLLAPSE_SNAP of vanishing, all ending at one far
+ *  edge, and both sides spanning the same stretch of the edge), else null. */
+export function collapseTarget(
+  model: GridLayout,
+  resizerIndex: number,
+  delta: number
+): 'negative' | 'positive' | null {
+  const zones = modelToZones(model)
+  const resizer = modelToResizers(model)[resizerIndex]
+
+  if (!zones || !resizer || delta === 0) {
+    return null
+  }
+
+  const side = delta > 0 ? 'positive' : 'negative'
+  const shrinking = (side === 'positive' ? resizer.positiveSideIndices : resizer.negativeSideIndices).map(i => zones[i])
+  const growing = (side === 'positive' ? resizer.negativeSideIndices : resizer.positiveSideIndices).map(i => zones[i])
+  const vertical = resizer.orientation === 'vertical'
+
+  if (shrinking.some(z => extentOf(z, resizer.orientation) - Math.abs(delta) > COLLAPSE_SNAP)) {
+    return null
+  }
+
+  const far = (z: GridZone) => (vertical ? (side === 'positive' ? z.right : z.left) : side === 'positive' ? z.bottom : z.top)
+
+  if (new Set(shrinking.map(far)).size !== 1) {
+    return null
+  }
+
+  const span = (list: GridZone[]) =>
+    vertical
+      ? [Math.min(...list.map(z => z.top)), Math.max(...list.map(z => z.bottom))]
+      : [Math.min(...list.map(z => z.left)), Math.max(...list.map(z => z.right))]
+
+  const [a0, a1] = span(shrinking)
+  const [b0, b1] = span(growing)
+
+  return a0 === b0 && a1 === b1 ? side : null
+}
+
+/** Remove the zones on `side` of the resizer and extend the zones on the other
+ *  side over the space they held — the divider has been dragged onto its
+ *  neighbour. Callers check `collapseTarget` first; an invalid request returns
+ *  the model unchanged. */
+export function collapseResizer(model: GridLayout, resizerIndex: number, side: 'negative' | 'positive'): GridLayout {
+  const zones = modelToZones(model)
+  const resizer = modelToResizers(model)[resizerIndex]
+
+  if (!zones || !resizer) {
+    return model
+  }
+
+  const vertical = resizer.orientation === 'vertical'
+  const removed = new Set(side === 'positive' ? resizer.positiveSideIndices : resizer.negativeSideIndices)
+  const growing = side === 'positive' ? resizer.negativeSideIndices : resizer.positiveSideIndices
+  const sample = zones[[...removed][0]]
+
+  const far = vertical
+    ? side === 'positive'
+      ? sample.right
+      : sample.left
+    : side === 'positive'
+      ? sample.bottom
+      : sample.top
+
+  const next = zones.map(z => ({ ...z }))
+
+  for (const i of growing) {
+    const zone = next[i]
+
+    if (vertical) {
+      side === 'positive' ? (zone.right = far) : (zone.left = far)
+    } else {
+      side === 'positive' ? (zone.bottom = far) : (zone.top = far)
+    }
+  }
+
+  const kept = next.filter(z => !removed.has(z.index)).map((z, index) => ({ ...z, index }))
+
+  return zonesToModel(kept)
 }
 
 // ---------------------------------------------------------------------------

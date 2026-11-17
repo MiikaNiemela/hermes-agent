@@ -36,6 +36,10 @@ export interface SplitNode {
   children: LayoutNode[]
   /** Parallel to children; relative flex weights. */
   weights: number[]
+  /** AUTHORED PROPORTIONS (zone-editor splits): children share the space by
+   *  `weights` even when a pane declares a fixed width/height, instead of
+   *  sidebar-style fixed tracks. Absent on splits made by dragging panes. */
+  proportional?: true
 }
 
 export interface GroupNode {
