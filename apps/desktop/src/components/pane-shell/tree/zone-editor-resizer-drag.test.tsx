@@ -39,10 +39,10 @@ function zoneBoxes(canvas: HTMLElement) {
   return [...canvas.querySelectorAll<HTMLElement>(':scope > div')]
     .filter(el => /^zone \d+$/.test(el.textContent ?? ''))
     .map(el => {
-      const left = num(el.style.left)
-      const top = num(el.style.top)
+      const [l, t, w, h] = [el.style.left, el.style.top, el.style.width, el.style.height].map(parseFloat)
 
-      return [left, top, left + num(el.style.width), top + num(el.style.height)]
+      // Round the far edges from the exact sum so adjacent zones agree.
+      return [Math.round(l * 10), Math.round(t * 10), Math.round((l + w) * 10), Math.round((t + h) * 10)]
     })
     .sort((a, b) => a[1] - b[1] || a[0] - b[0])
 }
@@ -78,9 +78,11 @@ function drag(handle: HTMLElement, fromX: number, toX: number, y: number) {
 
   const dir = Math.sign(toX - fromX)
 
-  for (let x = fromX + dir * 10; dir > 0 ? x <= toX : x >= toX; x += dir * 10) {
+  for (let x = fromX + dir * 10; dir > 0 ? x < toX : x > toX; x += dir * 10) {
     fireEvent.pointerMove(window, { clientX: x, clientY: y })
   }
+
+  fireEvent.pointerMove(window, { clientX: toX, clientY: y })
 
   fireEvent.pointerUp(window, { button: 0, clientX: toX, clientY: y })
 }
@@ -230,5 +232,141 @@ describe('zone editor resizer drag', () => {
       [500, 600],
       [600, 1000]
     ])
+  })
+
+  describe('drag a divider onto its neighbour', () => {
+    function threeColumns() {
+      const mounted = mount()
+
+      fireEvent.change(mounted.view.container.querySelector('input[type="number"]')!, { target: { value: '3' } })
+      fireEvent.click(mounted.view.getByText('Columns'))
+
+      return mounted
+    }
+
+    const spans = (canvas: HTMLElement) => zoneBoxes(canvas).map(b => [b[0], b[2]])
+    const collapsing = (canvas: HTMLElement) => canvas.querySelectorAll('[data-collapsing]').length
+
+    it('stops the divider exactly at the minimum zone width', () => {
+      const { canvas } = threeColumns()
+      const next = spans(canvas)[1][1]
+
+      // Pointer runs past the wall (but not onto the next divider).
+      drag(verticalResizerAt(canvas, 333, 500), 333, 630, 500)
+
+      // Zone 2 can shrink to 5 % (50 per mille) of the canvas, and no further.
+      expect(spans(canvas)[1]).toEqual([next - 50, next])
+    })
+
+    it('marks the squeezed zone while the pointer reaches the next divider, and merges it on release', () => {
+      const { canvas } = threeColumns()
+      const next = spans(canvas)[1][1]
+      const handle = verticalResizerAt(canvas, 333, 500)
+
+      fireEvent.pointerDown(handle, { button: 0, clientX: 333, clientY: 500 })
+
+      for (let x = 343; x <= 603; x += 10) {fireEvent.pointerMove(window, { clientX: x, clientY: 500 })}
+
+      // Pushing against the minimum is not yet a merge.
+      expect(collapsing(canvas)).toBe(0)
+
+      fireEvent.pointerMove(window, { clientX: next, clientY: 500 })
+
+      expect(collapsing(canvas)).toBe(1)
+
+      fireEvent.pointerUp(window, { button: 0, clientX: next, clientY: 500 })
+
+      expect(spans(canvas)).toEqual([
+        [0, next],
+        [next, 1000]
+      ])
+      expect(collapsing(canvas)).toBe(0)
+    })
+
+    it('cancels the merge when the pointer comes back before release', () => {
+      const { canvas } = threeColumns()
+      const next = spans(canvas)[1][1]
+      const handle = verticalResizerAt(canvas, 333, 500)
+
+      fireEvent.pointerDown(handle, { button: 0, clientX: 333, clientY: 500 })
+
+      for (let x = 343; x <= 663; x += 10) {fireEvent.pointerMove(window, { clientX: x, clientY: 500 })}
+      fireEvent.pointerMove(window, { clientX: next, clientY: 500 })
+      expect(collapsing(canvas)).toBe(1)
+
+      for (let x = 657; x > 500; x -= 10) {fireEvent.pointerMove(window, { clientX: x, clientY: 500 })}
+      fireEvent.pointerMove(window, { clientX: 500, clientY: 500 })
+
+      expect(collapsing(canvas)).toBe(0)
+
+      fireEvent.pointerUp(window, { button: 0, clientX: 500, clientY: 500 })
+
+      expect(spans(canvas)).toEqual([
+        [0, 500],
+        [500, next],
+        [next, 1000]
+      ])
+    })
+  })
+
+  describe('split preview during drags', () => {
+    const previewLine = (canvas: HTMLElement) =>
+      [...canvas.querySelectorAll<HTMLElement>(':scope > div')].find(
+        el => el.className.includes('pointer-events-none') && (el.style.width === '2px' || el.style.height === '2px')
+      ) ?? null
+
+    it('hides the split line while a divider is dragged', () => {
+      const { canvas, view } = mount()
+
+      fireEvent.change(view.container.querySelector('input[type="number"]')!, { target: { value: '3' } })
+      fireEvent.click(view.getByText('Columns'))
+      fireEvent.pointerMove(canvas, { clientX: 150, clientY: 500 })
+      flushFrames()
+      expect(previewLine(canvas)).not.toBeNull()
+
+      // Past the minimum-width wall the divider stops and the pointer runs on
+      // into the third zone, where a split would be possible.
+      fireEvent.pointerDown(verticalResizerAt(canvas, 333, 500), { button: 0, clientX: 333, clientY: 500 })
+
+      for (let x = 343; x <= 850; x += 10) {
+        fireEvent.pointerMove(canvas, { clientX: x, clientY: 500 })
+        fireEvent.pointerMove(window, { clientX: x, clientY: 500 })
+      }
+
+      flushFrames()
+
+      expect(previewLine(canvas)).toBeNull()
+
+      fireEvent.pointerUp(window, { button: 0, clientX: 850, clientY: 500 })
+      flushFrames()
+
+      // Releasing a divider drag must not split anything either.
+      expect(zoneBoxes(canvas).length).toBeLessThanOrEqual(3)
+    })
+
+    it('hides the split line while zones are being selected for a merge', () => {
+      const { canvas } = mount()
+
+      fireEvent.pointerMove(canvas, { clientX: 300, clientY: 500 })
+      flushFrames()
+      expect(previewLine(canvas)).not.toBeNull()
+
+      fireEvent.pointerDown(canvas, { button: 0, clientX: 300, clientY: 500 })
+
+      for (let x = 310; x <= 700; x += 10) {
+        fireEvent.pointerMove(canvas, { clientX: x, clientY: 500 })
+        fireEvent.pointerMove(window, { clientX: x, clientY: 500 })
+      }
+
+      flushFrames()
+
+      expect(previewLine(canvas)).toBeNull()
+
+      fireEvent.pointerUp(window, { button: 0, clientX: 700, clientY: 500 })
+      flushFrames()
+
+      // Releasing a selection must not split anything.
+      expect(zoneBoxes(canvas)).toHaveLength(3)
+    })
   })
 })

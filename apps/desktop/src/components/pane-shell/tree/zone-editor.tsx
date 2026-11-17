@@ -32,6 +32,9 @@ import { cn } from '@/lib/utils'
 
 import {
   canSplit,
+  clampDragDelta,
+  collapseResizer,
+  collapseTarget,
   doMerge,
   dragResizer,
   findResizerIndex,
@@ -114,6 +117,8 @@ export function ZoneEditor() {
   const [selectBox, setSelectBox] = useState<SelectBox | null>(null)
   const [selection, setSelection] = useState<number[]>([])
   const [mergeAt, setMergeAt] = useState<{ x: number; y: number } | null>(null)
+  // Zones a divider drag would merge away on release (dragged onto its neighbour).
+  const [collapsing, setCollapsing] = useState<number[] | null>(null)
   const [name, setName] = useState('')
   const canvasRef = useRef<HTMLDivElement>(null)
 
@@ -177,6 +182,9 @@ export function ZoneEditor() {
   const insideRef = useRef(false)
   const lastPointRef = useRef<{ x: number; y: number } | null>(null)
   const generationRef = useRef(0)
+  // A selection or divider drag in progress: the split line belongs to a
+  // plain hover/click only, and showing it mid-drag reads as "this will split".
+  const gestureRef = useRef(false)
 
   const publishPreview = useCallback((next: SplitPreview | null) => {
     if (sameSplitPreview(previewRef.current, next)) {
@@ -190,6 +198,12 @@ export function ZoneEditor() {
   const computePreview = useCallback(
     (clientX: number, clientY: number) => {
       if (!openRef.current || !canvasRef.current) {
+        return
+      }
+
+      if (gestureRef.current) {
+        publishPreview(null)
+
         return
       }
 
@@ -287,6 +301,12 @@ export function ZoneEditor() {
         return
       }
 
+      if (!dragged) {
+        gestureRef.current = true
+        generationRef.current += 1
+        publishPreview(null)
+      }
+
       dragged = true
 
       const box = {
@@ -309,6 +329,7 @@ export function ZoneEditor() {
     startPointerDrag(onMove, ev => {
       coalesceRef.current?.finish()
       setSelectBox(null)
+      gestureRef.current = false
 
       if (!dragged) {
         // Plain click: split at the previewed line. Read the ref — Shift may
@@ -344,33 +365,64 @@ export function ZoneEditor() {
     // different divider mid-drag.
     const key = resizerKey(resizer)
     let applied = 0
+    let collapseSide: 'negative' | 'positive' | null = null
+
+    gestureRef.current = true
+    generationRef.current += 1
+    publishPreview(null)
 
     const onMove = (ev: PointerEvent) => {
       const px = (horizontal ? ev.clientY : ev.clientX) - start
       const total = Math.round((px / (horizontal ? rect.height : rect.width)) * MULTIPLIER)
-      const step = total - applied
-
-      if (step === 0) {
-        return
-      }
-
-      const current = modelRef.current
-      const at = findResizerIndex(current, key)
+      let current = modelRef.current
+      let at = findResizerIndex(current, key)
 
       if (at === -1) {
         return
       }
 
-      const next = dragResizer(current, at, step)
+      // Move as far as the minimum zone size allows (a refused whole step
+      // used to leave the divider short of the wall).
+      const step = clampDragDelta(current, at, total - applied)
 
-      if (next !== current) {
-        applied = total
-        modelRef.current = next
-        setModel(next)
+      if (step !== 0) {
+        const next = dragResizer(current, at, step)
+
+        if (next !== current) {
+          applied += step
+          current = next
+          at = findResizerIndex(current, key)
+          modelRef.current = next
+          setModel(next)
+        }
+      }
+
+      // Pointer carried on to the neighbouring divider: preview the merge.
+      const side = at === -1 ? null : collapseTarget(current, at, total - applied)
+
+      if (side !== collapseSide) {
+        collapseSide = side
+        const r = side ? modelToResizers(current)[at] : null
+        setCollapsing(r ? (side === 'positive' ? r.positiveSideIndices : r.negativeSideIndices) : null)
       }
     }
 
-    startPointerDrag(onMove)
+    startPointerDrag(onMove, () => {
+      gestureRef.current = false
+
+      if (collapseSide) {
+        const current = modelRef.current
+        const at = findResizerIndex(current, key)
+
+        if (at !== -1) {
+          const next = collapseResizer(current, at, collapseSide)
+          modelRef.current = next
+          setModel(next)
+        }
+      }
+
+      setCollapsing(null)
+    })
   }
 
   const merge = () => {
@@ -466,10 +518,12 @@ export function ZoneEditor() {
       >
         {zones.map(zone => {
           const selected = selection.includes(zone.index)
+          const merging = collapsing?.includes(zone.index) ?? false
 
           return (
             <div
               className="absolute flex items-center justify-center rounded-[3px] border transition-colors"
+              data-collapsing={merging || undefined}
               key={zone.index}
               style={{
                 left: pct(zone.left),
@@ -478,8 +532,12 @@ export function ZoneEditor() {
                 height: pct(zone.bottom - zone.top),
                 // Accent over an elevated base — zones stay legible on dark
                 // themes where a bare accent wash sinks into the canvas.
-                background: `color-mix(in srgb, var(--ui-accent) ${selected ? 34 : 12}%, var(--ui-bg-elevated))`,
-                borderColor: `color-mix(in srgb, var(--ui-accent) ${selected ? 90 : 40}%, transparent)`
+                background: merging
+                  ? 'color-mix(in srgb, var(--destructive) 30%, var(--ui-bg-elevated))'
+                  : `color-mix(in srgb, var(--ui-accent) ${selected ? 34 : 12}%, var(--ui-bg-elevated))`,
+                borderColor: merging
+                  ? 'var(--destructive)'
+                  : `color-mix(in srgb, var(--ui-accent) ${selected ? 90 : 40}%, transparent)`
               }}
             >
               {/* Quiet zone tag — the app's small-caps label voice, not a
