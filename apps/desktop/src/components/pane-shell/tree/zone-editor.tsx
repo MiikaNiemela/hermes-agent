@@ -8,7 +8,8 @@
  *  - DRAG across zones to rubber-band select; the selection expands to its
  *    rectangular closure (ComputeClosure) and a Merge button appears.
  *  - Shared zone edges are draggable resizer thumbs (multi-zone edges move
- *    together, min-size clamped) — GridData.Drag semantics.
+ *    together, min-size clamped) — GridData.Drag semantics, except that runs
+ *    break at `+` crossings so rows inside each column resize independently.
  *  - Templates: Columns / Rows / Grid / Priority with a zone-count stepper.
  *
  * Saving converts the grid to our runtime layout tree (guillotine cuts) and
