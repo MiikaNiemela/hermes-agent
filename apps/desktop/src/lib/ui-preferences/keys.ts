@@ -35,6 +35,8 @@ const SHARED_KEYS: ReadonlySet<string> = new Set([
   'hermes.desktop.profileColors',
   'hermes.desktop.profileOrder',
   'hermes.desktop.profileRailVisible',
+  'hermes.desktop.profileRailHidden.v1',
+  'hermes.desktop.profileRailOrder.v1',
   'hermes.desktop.sessionListDensity',
   'hermes.desktop.sessionOrder',
   'hermes.desktop.sessionOrder.manual',

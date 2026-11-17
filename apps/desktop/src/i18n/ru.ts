@@ -2124,6 +2124,10 @@ export const ruOverrides = {
     switchToConnection: name => `Переключиться на ${name}`,
     switchConnectionFailed: name => `Не удалось подключиться к ${name}`,
     manageProfiles: 'Управлять профилями…',
+    railMenu: 'Меню профилей',
+    railConfigure: 'Настроить кнопки профилей…',
+    railMoveUp: (name: string) => `Переместить ${name} вверх`,
+    railMoveDown: (name: string) => `Переместить ${name} вниз`,
     connectGateway: 'Управлять шлюзами…',
     fleet: {
       localDevice: 'Это устройство (локальный бэкенд — установит Hermes, если его нет, иначе откроет новую сессию)',

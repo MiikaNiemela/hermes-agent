@@ -432,6 +432,10 @@ export const arCommandCenter = {
     switchToConnection: name => `التبديل إلى ${name}`,
     switchConnectionFailed: name => `تعذّر الاتصال بـ ${name}`,
     manageProfiles: 'إدارة الملفات الشخصية',
+    railMenu: 'قائمة الملفات الشخصية',
+    railConfigure: 'تهيئة أزرار الملفات الشخصية…',
+    railMoveUp: (name: string) => `نقل ${name} لأعلى`,
+    railMoveDown: (name: string) => `نقل ${name} لأسفل`,
     fleet: {
       localDevice: 'هذا الجهاز (خلفية محلية — تثبّت Hermes إن كان مفقودًا، وإلا تفتح جلسة جديدة)',
       installDeviceTitle: 'تثبيت Hermes على هذا الجهاز؟',

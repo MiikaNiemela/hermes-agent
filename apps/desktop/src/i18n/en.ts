@@ -2826,6 +2826,10 @@ export const en: Translations = {
     switchToConnection: name => `Switch to ${name}`,
     switchConnectionFailed: name => `Could not connect to ${name}`,
     manageProfiles: 'Manage profiles…',
+    railMenu: 'Profiles menu',
+    railConfigure: 'Configure profile buttons…',
+    railMoveUp: (name: string) => `Move ${name} up`,
+    railMoveDown: (name: string) => `Move ${name} down`,
     connectGateway: 'Manage gateways…',
     fleet: {
       allOnGateway: 'All profiles on this gateway',

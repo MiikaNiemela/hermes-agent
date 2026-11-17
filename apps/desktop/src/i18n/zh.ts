@@ -2747,6 +2747,10 @@ export const zhOverrides = {
     switchToConnection: name => `切换到 ${name}`,
     switchConnectionFailed: name => `无法连接到 ${name}`,
     manageProfiles: '管理配置档案…',
+    railMenu: '个人档案菜单',
+    railConfigure: '配置个人档案按钮…',
+    railMoveUp: (name: string) => `上移 ${name}`,
+    railMoveDown: (name: string) => `下移 ${name}`,
     connectGateway: '管理网关…',
     fleet: {
       allOnGateway: '此网关上的全部配置档案',

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import type { ProfileScope } from '@/api/client'
+import { getApiRequestConnection, type ProfileScope } from '@/api/client'
 import { ActionStatus } from '@/components/ui/action-status'
 import { Button } from '@/components/ui/button'
 import {
@@ -18,6 +18,7 @@ import { useI18n } from '@/i18n'
 import { AlertTriangle } from '@/lib/icons'
 import { slug } from '@/lib/sanitize'
 import { retireLocalProfileGateways } from '@/store/gateway'
+import { updateProfileRailIdentity } from '@/store/profile-rail-hidden'
 import { migrateTilesForProfile } from '@/store/session-states'
 
 import { isValidProfileName } from './create-profile-dialog'
@@ -83,6 +84,7 @@ export function RenameProfileDialog({
       return
     }
 
+    const connectionId = (typeof scope === 'object' && scope?.connectionId) || getApiRequestConnection()
     setStatus('saving')
     setError(null)
 
@@ -96,6 +98,10 @@ export function RenameProfileDialog({
       }
 
       await (scope == null ? renameProfile(currentName, trimmed) : renameProfile(currentName, trimmed, scope))
+
+      if (!isDefault) {
+        updateProfileRailIdentity(connectionId, currentName, trimmed)
+      }
 
       // The sessions moved with the directory; the tabs, cached tails and
       // remembered ids keyed by the old name must follow, or every open

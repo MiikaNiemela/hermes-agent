@@ -3,6 +3,7 @@ import { atom } from 'nanostores'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DesktopAgentRoster, DesktopConnectionsRegistry } from '@/global'
+import { $profileRailHidden, $profileRailOrder } from '@/store/profile-rail-hidden'
 
 import { ProfileRail } from './profile-switcher'
 
@@ -55,6 +56,10 @@ vi.mock('@/i18n', () => ({
           switchTo: (name: string, gateway: string) => `Open ${name} on ${gateway}`
         },
         importProfile: 'Import profile…',
+        railMenu: 'Profiles menu',
+        railConfigure: 'Configure profile buttons…',
+        railMoveUp: (name: string) => `Move ${name} up`,
+        railMoveDown: (name: string) => `Move ${name} down`,
         manageProfiles: 'Manage profiles…',
         newProfile: 'New profile',
         remoteOverride: {
@@ -234,6 +239,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  $profileRailHidden.set([])
+  $profileRailOrder.set([])
   $profileOrder.set([])
   vi.clearAllMocks()
   vi.restoreAllMocks()
@@ -257,7 +264,7 @@ describe('ProfileRail overflow', () => {
     mask = observeMask()
   })
 
-  it('marks only clipped edges and leaves create/import outside the scrolling profiles', () => {
+  it('marks only clipped edges and keeps the actions menu outside the scrolling profiles', () => {
     profiles.set(
       Array.from({ length: 8 }, (_, index) => ({ is_default: index === 0, name: index ? `agent${index}` : 'default' }))
     )
@@ -272,8 +279,11 @@ describe('ProfileRail overflow', () => {
     fireEvent.scroll(scroller)
     expect(mask.mock.calls.at(-1)?.[0]).toContain('to right, black,')
     expect(mask.mock.calls.at(-1)?.[0]).toContain('transparent)')
-    expect(scroller.contains(screen.getByRole('button', { name: 'New profile' }))).toBe(false)
-    expect(scroller.contains(screen.getByRole('button', { name: 'Import profile…' }))).toBe(false)
+    expect(scroller.contains(screen.getByRole('button', { name: 'Profiles menu' }))).toBe(false)
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Profiles menu' }), { button: 0, ctrlKey: false })
+    expect(screen.getByRole('menuitem', { name: 'New profile' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: 'Import profile…' })).toBeTruthy()
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
 
     scroller.scrollLeft = 50
     fireEvent.scroll(scroller)
@@ -313,12 +323,12 @@ describe('ProfileRail overflow', () => {
     expect(mask.mock.calls.at(-1)?.[0]).toContain('transparent)')
   })
 
-  it('restores wheel navigation and edge feedback after leaving the condensed menu', () => {
+  it('retains wheel navigation and edge feedback when many profiles are removed', () => {
     profiles.set(
       Array.from({ length: 14 }, (_, index) => ({ is_default: index === 0, name: index ? `agent${index}` : 'default' }))
     )
     const { container } = render(<ProfileRail />)
-    expect(container.querySelector('[data-slot="profile-dropdown"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="profile-dropdown"]')).toBeNull()
     act(() => profiles.set(profiles.get().slice(0, 8)))
     const scroller = screen.getByRole('button', { name: 'agent1' }).closest('.overflow-x-auto') as HTMLDivElement
     Object.defineProperties(scroller, {
@@ -337,15 +347,32 @@ describe('ProfileRail overflow', () => {
 })
 
 describe('ProfileRail fleet mode', () => {
+  it('configures gateway profile buttons separately and keeps hidden routes in the menu', async () => {
+    armFleet()
+    await renderFleet()
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Profiles menu' }), { button: 0, ctrlKey: false })
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Configure profile buttons…' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'builder · This device' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    expect(screen.queryByRole('button', { name: 'builder · This device' })).toBeNull()
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Profiles menu' }), { button: 0, ctrlKey: false })
+    fireEvent.click(screen.getByRole('menuitem', { name: 'builder · This device' }))
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(selectConnection).toHaveBeenCalledWith('local', { profile: 'builder' })
+  })
+
   it.each([false, true])(
-    'keeps right-click launch routes exact without selecting a profile (condensed=%s)',
-    async condensed => {
+    'keeps right-click launch routes exact without selecting a profile (from menu=%s)',
+    async fromMenu => {
       armFleet()
       activeConnectionId.set('local')
       profiles.set([
         { is_default: true, name: 'default' },
         { is_default: false, name: 'builder' },
-        ...(condensed ? Array.from({ length: 12 }, (_, index) => ({ is_default: false, name: `p${index}` })) : [])
+        ...(fromMenu ? Array.from({ length: 12 }, (_, index) => ({ is_default: false, name: `p${index}` })) : [])
       ])
       await renderFleet()
 
@@ -354,12 +381,12 @@ describe('ProfileRail fleet mode', () => {
         { label: 'scout · Gateway A', connectionId: 'gateway-a', profile: 'scout' },
         { label: 'default · Gateway A', connectionId: 'gateway-a', profile: 'default' }
       ]) {
-        if (condensed) {
-          fireEvent.pointerDown(screen.getByRole('button', { name: 'Profiles' }), { button: 0, ctrlKey: false })
+        if (fromMenu) {
+          fireEvent.pointerDown(screen.getByRole('button', { name: 'Profiles menu' }), { button: 0, ctrlKey: false })
         }
 
         fireEvent.contextMenu(
-          screen.getByRole(condensed ? (target.connectionId ? 'menuitem' : 'menuitemradio') : 'button', {
+          screen.getByRole(fromMenu ? (target.connectionId ? 'menuitem' : 'menuitemradio') : 'button', {
             name: target.label
           })
         )
@@ -427,7 +454,8 @@ describe('ProfileRail fleet mode', () => {
     expect(getAgentRoster).not.toHaveBeenCalled()
     expect(screen.queryByRole('group', { name: /^Profiles on/ })).toBeNull()
     expect(container.querySelector('[data-slot="profile-rail-divider"]')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Manage gateways…' })).toBeTruthy()
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Profiles menu' }), { button: 0, ctrlKey: false })
+    expect(screen.getByRole('menuitem', { name: 'Manage gateways…' })).toBeTruthy()
   })
 
   it('lays every other gateway on the strip as an at-rest group, in switcher order', async () => {
@@ -481,9 +509,11 @@ describe('ProfileRail fleet mode', () => {
     expect(screen.getByRole('button', { name: 'scout' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'default' })).toBeTruthy()
 
-    // Fleet pill: "all on this gateway" replaces the default↔all toggle.
-    expect(screen.getByRole('button', { name: 'All profiles on this gateway' })).toBeTruthy()
+    // Fleet-wide scope and gateway management live in the overflow menu.
     expect(screen.queryByRole('button', { name: 'Manage gateways…' })).toBeNull()
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Profiles menu' }), { button: 0, ctrlKey: false })
+    expect(screen.getByRole('menuitem', { name: 'All profiles on this gateway' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: 'Manage gateways…' })).toBeTruthy()
   })
 
   it('marks an unreachable gateway but never hides it', async () => {
@@ -598,20 +628,22 @@ describe('ProfileRail fleet mode', () => {
     expect(screen.getByRole('button', { name: 'builder' })).toBeTruthy()
   })
 
-  it('counts the whole fleet toward the condensed threshold and sections the menu by gateway', async () => {
+  it('keeps a large fleet on the rail and sections the overflow menu by gateway', async () => {
     armFleet()
     profiles.set([
       { is_default: true, name: 'default' },
       ...Array.from({ length: 11 }, (_, index) => ({ is_default: false, name: `p${index + 1}` }))
     ])
-    // 11 named on Gateway A + local (default, builder) + gateway-b (default) = 14 > 13.
     const container = await renderFleet()
 
-    expect(screen.getByRole('button', { name: 'Profiles' })).toBeTruthy()
-    expect(container.querySelector('[data-slot="profile-rail-rest-square"]')).toBeNull()
+    expect(screen.getByRole('button', { name: 'p11' })).toBeTruthy()
+    expect(container.querySelector('[data-slot="profile-rail-rest-square"]')).toBeTruthy()
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Profiles menu' }), { button: 0, ctrlKey: false })
+    expect(screen.getByRole('menuitem', { name: 'builder · This device' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: 'default · Gateway B' })).toBeTruthy()
   })
 
-  it('keeps the device glyph on the This device row once the rail condenses', async () => {
+  it('keeps the device glyph on the This device overflow row', async () => {
     armFleet()
     profiles.set([
       { is_default: true, name: 'default' },
@@ -619,7 +651,7 @@ describe('ProfileRail fleet mode', () => {
     ])
     await renderFleet()
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: 'Profiles' }), { button: 0, ctrlKey: false })
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Profiles menu' }), { button: 0, ctrlKey: false })
 
     const localDevice = await screen.findByRole('menuitem', {
       name: 'This device (local backend — installs Hermes if missing, otherwise opens a fresh session)'
@@ -632,11 +664,10 @@ describe('ProfileRail fleet mode', () => {
     expect(gatewayBHome.querySelector('.codicon-home')).toBeTruthy()
   })
 
-  // Regression for #106017 / #131632: the condensed menu listed every at-rest gateway's
-  // default but dropped the ACTIVE gateway's own — This device's, in the usual
-  // case — leaving it reachable only by hotkey.
+  // Regression for #106017 / #131632: every gateway, including the active one,
+  // must retain its default-profile route in the profile menu.
   it.each(['local', 'gateway-a'])(
-    'lists the active gateway default in the condensed menu (%s active)',
+    'lists the active gateway default in the overflow menu (%s active)',
     async active => {
       armFleet()
       activeConnectionId.set(active)
@@ -646,8 +677,7 @@ describe('ProfileRail fleet mode', () => {
       ])
       await renderFleet()
 
-      const trigger = screen.getByRole('button', { name: 'Profiles' })
-      expect(trigger.textContent).toContain('Arya')
+      const trigger = screen.getByRole('button', { name: 'Profiles menu' })
 
       fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false })
 
@@ -663,30 +693,28 @@ describe('ProfileRail fleet mode', () => {
 
 // Every rail layout must keep a pointer door back to the ACTIVE gateway's
 // default. Each layout renders that door through its own code path (single-
-// gateway pill, fleet home square, condensed menu); the condensed fleet menu
-// dropped it (#106017, #131632). A new layout that drops it fails here.
+// gateway pill or fleet home square); count no longer changes the layout.
 describe('ProfileRail: the active default is always one click away', () => {
   const ARYA = { display_name: 'Arya', is_default: true, name: 'default' } as { is_default: boolean; name: string }
 
   const named = (count: number) =>
     Array.from({ length: count }, (_, index) => ({ is_default: false, name: `p${index + 1}` }))
 
-  // Profile counts sit either side of the condensed threshold (13), counting
-  // the fleet's at-rest squares: 3 on the other gateways in armFleet's roster.
+  // Exercise small and large lists, on both single-gateway and fleet rails.
   const layouts = [
-    { fleet: false, condensed: false, active: null, count: 2 },
-    { fleet: false, condensed: true, active: null, count: 13 },
-    { fleet: true, condensed: false, active: 'local', count: 2 },
-    { fleet: true, condensed: true, active: 'local', count: 11 },
-    { fleet: true, condensed: false, active: 'gateway-a', count: 2 },
-    { fleet: true, condensed: true, active: 'gateway-a', count: 11 }
+    { fleet: false, active: null, count: 2 },
+    { fleet: false, active: null, count: 13 },
+    { fleet: true, active: 'local', count: 2 },
+    { fleet: true, active: 'local', count: 11 },
+    { fleet: true, active: 'gateway-a', count: 2 },
+    { fleet: true, active: 'gateway-a', count: 11 }
   ] as const
 
   const cases = layouts.flatMap(layout => (['named', 'all'] as const).map(from => ({ ...layout, from })))
 
   it.each(cases)(
-    'fleet=$fleet condensed=$condensed active=$active, from $from',
-    async ({ active, condensed, count, fleet, from }) => {
+    'fleet=$fleet count=$count active=$active, from $from',
+    async ({ active, count, fleet, from }) => {
       if (fleet) {
         armFleet()
         activeConnectionId.set(active)
@@ -697,7 +725,7 @@ describe('ProfileRail: the active default is always one click away', () => {
       profileScope.set(from === 'all' ? '*' : 'p1')
       await renderFleet()
 
-      expect(Boolean(screen.queryByRole('button', { name: 'Profiles' })), 'layout under test').toBe(condensed)
+      expect(screen.queryByRole('button', { name: 'Profiles' }), 'native rail does not auto-condense').toBeNull()
 
       // A visible control named for the default (home pill / home square)…
       const pill = screen
@@ -707,8 +735,8 @@ describe('ProfileRail: the active default is always one click away', () => {
       if (pill) {
         fireEvent.click(pill)
       } else {
-        // …or its row in the condensed menu.
-        fireEvent.pointerDown(screen.getByRole('button', { name: 'Profiles' }), { button: 0, ctrlKey: false })
+        // …or its row in the overflow menu.
+        fireEvent.pointerDown(screen.getByRole('button', { name: 'Profiles menu' }), { button: 0, ctrlKey: false })
         fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Arya' }))
       }
 

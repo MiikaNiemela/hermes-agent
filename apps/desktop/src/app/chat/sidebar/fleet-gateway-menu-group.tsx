@@ -22,6 +22,8 @@ interface FleetGatewayMenuGroupProps {
   onSelect: (agent: FleetAgent) => void
   /** `data-slot` on the group wrapper; each menu keeps its own for tests. */
   slot: string
+  /** Optional custom profile row for menus with session status. */
+  renderRow?: (agent: FleetAgent, label: string) => ReactNode
   /** Optional wrapper around each row (the rail menu adds a launch context menu). */
   wrapRow?: (row: ReactNode, agent: FleetAgent, label: string) => ReactNode
 }
@@ -29,7 +31,7 @@ interface FleetGatewayMenuGroupProps {
 /** One remote gateway's section in a profile menu: separator, gateway label
  *  (amber dot when unreachable), then a row per profile on that gateway.
  *  Shared by the rail's overflow dropdown and the compact profile dropdown. */
-export function FleetGatewayMenuGroup({ group, onSelect, slot, wrapRow }: FleetGatewayMenuGroupProps) {
+export function FleetGatewayMenuGroup({ group, onSelect, renderRow, slot, wrapRow }: FleetGatewayMenuGroupProps) {
   const { t } = useI18n()
   const p = t.profiles
   const colors = useStore($profileColors)
@@ -46,7 +48,9 @@ export function FleetGatewayMenuGroup({ group, onSelect, slot, wrapRow }: FleetG
         const localDefault = agent.connectionKind === 'local' && agent.isDefault
         const label = localDefault ? p.fleet.localDevice : p.fleet.onGateway(agent.profile, group.label)
 
-        const row = (
+        const row = renderRow ? (
+          renderRow(agent, label)
+        ) : (
           <DropdownMenuItem aria-label={label} className="min-w-0" key={agent.profile} onSelect={() => onSelect(agent)}>
             <span className="flex min-w-0 items-center gap-1.5">
               {localDefault ? (

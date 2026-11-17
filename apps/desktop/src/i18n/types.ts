@@ -2488,6 +2488,10 @@ export interface Translations extends NoticeTranslations {
     switchToConnection: (name: string) => string
     switchConnectionFailed: (name: string) => string
     manageProfiles: string
+    railMenu: string
+    railConfigure: string
+    railMoveUp: (name: string) => string
+    railMoveDown: (name: string) => string
     connectGateway: string
     fleet: {
       allOnGateway: string

@@ -355,6 +355,10 @@ export const zhHantCommandCenter = {
     switchToConnection: name => `切換至 ${name}`,
     switchConnectionFailed: name => `無法連線至 ${name}`,
     manageProfiles: '管理設定檔…',
+    railMenu: '個人檔案選單',
+    railConfigure: '設定個人檔案按鈕…',
+    railMoveUp: (name: string) => `上移 ${name}`,
+    railMoveDown: (name: string) => `下移 ${name}`,
     fleet: {
       localDevice: '此裝置（本機後端——若未安裝 Hermes 則會安裝，否則開啟新的工作階段）',
       installDeviceTitle: '在此裝置上安裝 Hermes？',

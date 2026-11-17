@@ -2,11 +2,13 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { atom } from 'nanostores'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { $profileRailHidden, profileRailKey } from '@/store/profile-rail-hidden'
+
 import { ProfileRail } from './profile-switcher'
 
 // #91710: a profile that finishes work while another is selected must carry a
-// durable unread/attention indicator on its rail square (and in the condensed
-// dropdown), with the counts in the accessible name. The summary derives from
+// durable unread/attention indicator on its rail square and overflow menu row,
+// with the counts in the accessible name. The summary derives from
 // the REAL session-unread/session-dot-state stores — only the rail's own shell
 // dependencies (routing, profile registry, dialogs) are mocked, so this tests
 // the marker → summary → square path end to end.
@@ -33,6 +35,7 @@ vi.mock('@/i18n', () => ({
         failedSaveSoul: 'Failed to save SOUL.md',
         importProfile: 'Import profile…',
         manageProfiles: 'Manage profiles…',
+        railMenu: 'Profiles menu',
         newProfile: 'New profile',
         renameMenu: 'Rename…',
         remoteOverride: {
@@ -109,6 +112,7 @@ const { $unreadFinishedMarkers } = await import('@/store/session-unread')
 
 afterEach(() => {
   cleanup()
+  $profileRailHidden.set([])
   profiles.set([{ is_default: true, name: 'default' }])
   $unreadFinishedMarkers.set({})
 })
@@ -164,22 +168,21 @@ describe('ProfileRail per-profile status (#91710)', () => {
     expect(document.querySelector('[data-slot="profile-status-dot"]')).toBeNull()
   })
 
-  it('keeps the indicator in the condensed dropdown beyond the square threshold', async () => {
-    // Past 13 squares the rail collapses to a dropdown; the unread state must
-    // survive the collapse.
+  it('keeps the indicator in the overflow menu when a profile is hidden from the rail', async () => {
     profiles.set([
       { is_default: true, name: 'default' },
       { is_default: false, name: 'writer' },
       ...Array.from({ length: 13 }, (_, index) => ({ is_default: false, name: `bot-${index}` }))
     ])
     $unreadFinishedMarkers.set({ writer: ['s1'] })
+    $profileRailHidden.set([profileRailKey(null, 'writer')])
 
     render(<ProfileRail />)
 
-    const trigger = screen.getByRole('button', { name: 'Profiles' })
+    expect(screen.queryByRole('button', { name: 'writer, 1 unread' })).toBeNull()
+    const trigger = screen.getByRole('button', { name: 'Profiles menu' })
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' })
-    fireEvent.click(trigger)
 
     const writerItem = await screen.findByRole('menuitemradio', { name: 'writer, 1 unread' })
 

@@ -38,6 +38,7 @@ vi.mock('@/i18n', () => ({
         fleet: { onGateway: (name: string, gateway: string) => `${name} · ${gateway}` },
         importProfile: 'Import profile…',
         manageProfiles: 'Manage profiles…',
+        railMenu: 'Profiles menu',
         newProfile: 'New profile',
         notServedHere: 'Not served here',
         openInNewWindow: 'Open in new window',
@@ -163,12 +164,12 @@ it('the statusbar profile menu shows the profiles its gateway does not serve as 
   expect(getAgentRoster).toHaveBeenCalled()
 })
 
-it("the rail's profile menu shows them the same way, and its home pill offers no switch to an unserved default", async () => {
+it("the rail's menus mark unserved profiles and keep all-profiles available", async () => {
   render(<ProfileRail />)
 
-  // The home pill would switch to default, which this gateway refuses: it toggles the all-profiles view instead.
-  fireEvent.click(await screen.findByRole('button', { name: 'All profiles' }))
-  expect(screen.queryByRole('button', { name: 'Switch to default' })).toBeNull()
+  await openMenu(screen.getByRole('button', { name: 'Profiles menu' }))
+  await expectUnavailable('default')
+  fireEvent.click(screen.getByRole('menuitem', { name: 'All profiles' }))
   expect(setShowAllProfiles).toHaveBeenCalledWith(true)
 
   await openMenu(screen.getByRole('button', { name: 'Profiles' }))

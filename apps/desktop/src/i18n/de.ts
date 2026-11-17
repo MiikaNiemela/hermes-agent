@@ -3269,6 +3269,10 @@ export const deOverrides = {
     switchToConnection: name => `Zu ${name} wechseln`,
     switchConnectionFailed: name => `Keine Verbindung zu ${name} möglich`,
     manageProfiles: 'Profile verwalten…',
+    railMenu: 'Profilmenü',
+    railConfigure: 'Profil-Schaltflächen konfigurieren…',
+    railMoveUp: (name: string) => `${name} nach oben`,
+    railMoveDown: (name: string) => `${name} nach unten`,
     connectGateway: 'Gateways verwalten…',
     fleet: {
       allOnGateway: 'Alle Profile auf diesem Gateway',
