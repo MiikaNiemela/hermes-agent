@@ -34,6 +34,7 @@ import {
   canSplit,
   doMerge,
   dragResizer,
+  findResizerIndex,
   type GridLayout,
   type GridResizer,
   type GridZone,
@@ -45,6 +46,7 @@ import {
   modelToResizers,
   modelToZones,
   MULTIPLIER,
+  resizerKey,
   splitZone
 } from './grid-model'
 import { gridIsTreeExpressible, gridToTree, type PanePlacementHint } from './grid-to-tree'
@@ -336,6 +338,11 @@ export function ZoneEditor() {
     const resizer = resizers[index]
     const horizontal = resizer.orientation === 'horizontal'
     const start = horizontal ? e.clientY : e.clientX
+    // Track the grabbed edge by the zones it separates, not by `index`: each
+    // step rebuilds the grid, and passing another row's/column's divider
+    // reorders the resizer list, so a captured index would start driving a
+    // different divider mid-drag.
+    const key = resizerKey(resizer)
     let applied = 0
 
     const onMove = (ev: PointerEvent) => {
@@ -343,16 +350,23 @@ export function ZoneEditor() {
       const total = Math.round((px / (horizontal ? rect.height : rect.width)) * MULTIPLIER)
       const step = total - applied
 
-      if (step !== 0) {
-        setModel(m => {
-          const next = dragResizer(m, index, step)
+      if (step === 0) {
+        return
+      }
 
-          if (next !== m) {
-            applied = total
-          }
+      const current = modelRef.current
+      const at = findResizerIndex(current, key)
 
-          return next
-        })
+      if (at === -1) {
+        return
+      }
+
+      const next = dragResizer(current, at, step)
+
+      if (next !== current) {
+        applied = total
+        modelRef.current = next
+        setModel(next)
       }
     }
 
