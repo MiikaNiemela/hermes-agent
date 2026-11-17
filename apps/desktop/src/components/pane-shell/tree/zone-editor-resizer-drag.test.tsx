@@ -162,6 +162,43 @@ describe('zone editor resizer drag', () => {
     ])
   })
 
+  for (const [label, target, mergeFrom, mergeTo, expected] of [
+    ['onto', 700, 560, 800, [[0, 500], [500, 1000]]],
+    ['next to', 720, 560, 800, [[0, 500], [500, 1000]]],
+    ['onto (merge right side)', 700, 650, 900, [[0, 500], [500, 1000]]]
+  ] as const) {
+    it(`merges after a divider was dragged ${label} another row's divider`, () => {
+      const { canvas, view } = mount()
+
+      fireEvent.change(view.container.querySelector('input[type="number"]')!, { target: { value: '3' } })
+      fireEvent.click(view.getByText('Rows'))
+      split(canvas, 300, 150)
+      split(canvas, 500, 500)
+      split(canvas, 700, 850)
+      split(canvas, 650, 500)
+      drag(verticalResizerAt(canvas, 650, 500), 650, target, 500)
+
+      const before = zoneBoxes(canvas)
+
+      fireEvent.pointerDown(canvas, { button: 0, clientX: mergeFrom, clientY: 450 })
+      fireEvent.pointerMove(window, { clientX: (mergeFrom + mergeTo) / 2, clientY: 460 })
+      fireEvent.pointerMove(window, { clientX: mergeTo, clientY: 470 })
+      fireEvent.pointerUp(window, { button: 0, clientX: mergeTo, clientY: 470 })
+
+      const button = view.queryByRole('button', { name: /^Merge \d+ zones$/ })
+
+      expect(button?.textContent).toBe('Merge 2 zones')
+      fireEvent.click(button!)
+
+      const after = zoneBoxes(canvas)
+      const row = (boxes: number[][], top: number) => boxes.filter(b => b[1] === top).map(b => [b[0], b[2]])
+
+      expect(row(after, 0)).toEqual(row(before, 0))
+      expect(row(after, 667)).toEqual(row(before, 667))
+      expect(row(after, 333)).toEqual(expected)
+    })
+  }
+
   it('keeps dragging the grabbed divider when the drag reverses direction', () => {
     const { canvas, view } = mount()
 
