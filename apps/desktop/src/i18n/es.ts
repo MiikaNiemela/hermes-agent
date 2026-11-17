@@ -4855,6 +4855,8 @@ export const esOverrides = {
     layoutNamePlaceholder: fallback => `Nombre del diseño (${fallback})`,
     saveApply: 'Guardar y aplicar',
     notExpressible: 'esta disposición se entrelaza (en molinete) y aún no puede expresarse como divisiones anidadas',
+    placeholderTitle: 'Zona vacía',
+    placeholderHint: 'Arrastra un panel aquí. Cierra esta pestaña para quitar la zona.',
     zoneCount: count => `${count} zonas`,
     tabCount: count => `${count} pestañas`,
     tabActions: title => `Acciones de ${title}`

@@ -10,6 +10,7 @@
 import type { GridLayout, GridZone } from './grid-model'
 import { modelToZones } from './grid-model'
 import { group, type LayoutNode, normalize, split } from './model'
+import { newPlaceholderId } from './placeholder-ids'
 
 function cutCandidates(zones: GridZone[], axis: 'x' | 'y'): number[] {
   const coords = new Set(zones.flatMap(z => (axis === 'x' ? [z.left, z.right] : [z.top, z.bottom])))
@@ -28,9 +29,12 @@ function isValidCut(zones: GridZone[], axis: 'x' | 'y', at: number): boolean {
  */
 function cut(zones: GridZone[], assignPane: (zoneIndex: number) => string[]): LayoutNode | null {
   if (zones.length === 1) {
-    // Zones without panes become EMPTY groups — editor-authored drop targets
-    // that live until the first structural op prunes them (normalize).
-    return group(assignPane(zones[0].index))
+    // A zone no pane landed in holds a placeholder: `normalize` prunes empty
+    // groups, which used to delete every unfilled zone (and with it whole
+    // drawn columns) the moment the layout was applied.
+    const panes = assignPane(zones[0].index)
+
+    return group(panes.length > 0 ? panes : [newPlaceholderId()])
   }
 
   for (const axis of ['x', 'y'] as const) {
@@ -169,7 +173,7 @@ function assignZones(zones: GridZone[], panes: PlacedPane[]): Map<number, string
 /**
  * Convert a grid to a tree. Panes carry placement hints (from their
  * contribution's `data.placement`) and land in geometrically fitting zones;
- * zones beyond the pane count stay as EMPTY zones.
+ * zones beyond the pane count hold placeholder panes (`placeholder-ids.ts`).
  */
 export function gridToTree(gridModel: GridLayout, panes: PlacedPane[]): LayoutNode | null {
   const zones = modelToZones(gridModel)
@@ -181,7 +185,14 @@ export function gridToTree(gridModel: GridLayout, panes: PlacedPane[]): LayoutNo
   const assignments = assignZones(zones, panes)
   const result = cut(zones, zoneIndex => assignments.get(zoneIndex) ?? [])
 
-  return result ? normalize(result) : null
+  return result ? normalize(markProportional(result)) : null
+}
+
+/** Every split the editor draws is authored proportions (see SplitNode). */
+function markProportional(node: LayoutNode): LayoutNode {
+  return node.type === 'group'
+    ? node
+    : { ...node, proportional: true, children: node.children.map(markProportional) }
 }
 
 /** True when the grid is expressible as a tree (guillotine-cuttable). */

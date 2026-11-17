@@ -23,13 +23,13 @@ import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef,
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { registry } from '@/contrib/registry'
 import { useI18n } from '@/i18n'
 import { ESCAPE_PRIORITY, isTopEscapeLayer, pushEscapeLayer } from '@/lib/escape-layers'
 import { startPointerDrag } from '@/lib/pointer-drag'
 import { rafCoalesce } from '@/lib/raf-coalesce'
 import { cn } from '@/lib/utils'
 
+import { layoutTreeFromGrid } from './editor-layout'
 import {
   canSplit,
   clampDragDelta,
@@ -52,10 +52,8 @@ import {
   resizerKey,
   splitZone
 } from './grid-model'
-import { gridIsTreeExpressible, gridToTree, type PanePlacementHint } from './grid-to-tree'
-import { allPaneIds } from './model'
+import { gridIsTreeExpressible } from './grid-to-tree'
 import { applyLayoutPreset, saveLayoutPresetTree } from './presets'
-import { $layoutTree } from './store'
 
 export const $zoneEditorOpen = atom(false)
 
@@ -432,18 +430,9 @@ export function ZoneEditor() {
   }
 
   const save = () => {
-    const paneIds = allPaneIds($layoutTree.get() ?? { type: 'group', id: 'tmp', panes: [], active: '' })
-    // Placement hints ride on the pane contributions (`data.placement`), so
-    // zones are assigned by ROLE (main/left/right/bottom), not index order.
-    const contributions = registry.getArea('panes')
-
-    const placed = paneIds.map(id => ({
-      id,
-      placement: (contributions.find(c => c.id === id)?.data as { placement?: PanePlacementHint } | undefined)
-        ?.placement
-    }))
-
-    const tree = gridToTree(model, placed)
+    // Open panes claim zones by role; closed ones ride along off-grid and
+    // unfilled zones hold placeholders (editor-layout.ts).
+    const tree = layoutTreeFromGrid(model)
 
     if (!tree) {
       return

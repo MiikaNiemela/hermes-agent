@@ -583,6 +583,8 @@ export const arChrome = {
     layoutNamePlaceholder: fallback => `اسم التخطيط (${fallback})`,
     saveApply: 'حفظ وتطبيق',
     notExpressible: 'هذا الترتيب متشابك — لا يمكن تمثيله كتقسيمات متداخلة بعد',
+    placeholderTitle: 'منطقة فارغة',
+    placeholderHint: 'اسحب لوحة إلى هنا. أغلق هذا التبويب لإزالة المنطقة.',
     zoneCount: count => `${count} مناطق`,
     tabCount: count => `${count} تبويبات`,
     tabActions: title => `إجراءات ${title}`

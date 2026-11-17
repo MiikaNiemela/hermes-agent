@@ -3895,6 +3895,8 @@ export interface Translations extends NoticeTranslations {
     layoutNamePlaceholder: (fallback: string) => string
     saveApply: string
     notExpressible: string
+    placeholderTitle: string
+    placeholderHint: string
     zoneCount: (count: number) => string
     tabCount: (count: number) => string
     /** A phone tab picker row's actions button (names the tab). */

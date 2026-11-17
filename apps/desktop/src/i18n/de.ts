@@ -4868,6 +4868,8 @@ export const deOverrides = {
     layoutNamePlaceholder: fallback => `Layout-Name (${fallback})`,
     saveApply: 'Speichern & anwenden',
     notExpressible: 'diese Anordnung greift ineinander (Windrad) — noch nicht als verschachtelte Splits ausdrückbar',
+    placeholderTitle: 'Leere Zone',
+    placeholderHint: 'Ziehe ein Panel hierher. Schließe diesen Tab, um die Zone zu entfernen.',
     zoneCount: count => `${count} Zonen`,
     tabCount: count => `${count} Tabs`,
     tabActions: title => `Aktionen für ${title}`

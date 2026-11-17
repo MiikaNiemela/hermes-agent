@@ -244,6 +244,17 @@ export function allFixedAbsorberIndex(
   return -1
 }
 
+/** A child's track INSIDE `parent`: always flex in a proportional split (the
+ *  drawn weights decide), else the child's own fixed size if it has one. */
+export function childTrackSize(
+  parent: LayoutNode,
+  child: LayoutNode,
+  axis: 'row' | 'column',
+  ctx: TrackContext
+): string | null {
+  return parent.type === 'split' && parent.proportional ? null : fixedTrackSize(child, axis, ctx)
+}
+
 export function fixedTrackSize(node: LayoutNode, axis: 'row' | 'column', ctx: TrackContext): string | null {
   if (node.type === 'group') {
     // Ancestor splits must size a minimized zone as its strip, not as its
@@ -296,6 +307,12 @@ export function fixedTrackSize(node: LayoutNode, axis: 'row' | 'column', ctx: Tr
     // must not resize the container (dropping sessions into a wider fixed
     // zone used to snap the whole zone down to sidebar width).
     return cssMax(declaredSizes) ?? null
+  }
+
+  // Authored proportions share their container by weight: a flex track
+  // however its panes are sized.
+  if (node.proportional) {
+    return null
   }
 
   const visible = node.children.filter(child => !subtreeGone(child, ctx))

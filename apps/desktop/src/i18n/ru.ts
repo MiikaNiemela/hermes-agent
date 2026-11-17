@@ -3528,6 +3528,8 @@ export const ruOverrides = {
     layoutNamePlaceholder: fallback => `Название раскладки (${fallback})`,
     saveApply: 'Сохранить и применить',
     notExpressible: 'эта расстановка зацеплена (pinwheel) — пока не выразима как вложенные разделения',
+    placeholderTitle: 'Пустая зона',
+    placeholderHint: 'Перетащите сюда панель. Закройте эту вкладку, чтобы удалить зону.',
     zoneCount: count => `${count} ${RU_NOUN(count, 'зона', 'зоны', 'зон')}`,
     tabCount: count => `${count} ${RU_NOUN(count, 'вкладка', 'вкладки', 'вкладок')}`,
     tabActions: title => `Действия: ${title}`

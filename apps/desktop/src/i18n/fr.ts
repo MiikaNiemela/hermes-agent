@@ -4880,6 +4880,8 @@ export const frOverrides = {
     layoutNamePlaceholder: fallback => `Nom de la mise en page (${fallback})`,
     saveApply: 'Enregistrer et appliquer',
     notExpressible: "cet agencement s'entrelace (roue) — pas encore exprimable comme des divisions imbriquées",
+    placeholderTitle: 'Zone vide',
+    placeholderHint: 'Faites glisser un panneau ici. Fermez cet onglet pour supprimer la zone.',
     zoneCount: count => `${count} zones`,
     tabCount: count => `${count} onglet${count === 1 ? '' : 's'}`,
     tabActions: title => `Actions pour ${title}`
