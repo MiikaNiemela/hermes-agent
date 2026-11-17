@@ -10,6 +10,8 @@
  *  - Zones are rectangles in the 0..10000 coordinate space (prefix sums).
  *  - Resizers are the shared edges between zones, derived from cellChildMap
  *    discontinuities; dragging one moves every zone touching that edge.
+ *    One deliberate deviation: a resizer run stops at a `+` crossing, so
+ *    collinear edges in different columns/rows are separate handles.
  *  - Merging computes the rectangular CLOSURE of the selection (extending it
  *    until no zone is partially cut) — the signature FancyZones merge feel.
  */
@@ -181,6 +183,22 @@ export function modelToZones(model: GridLayout): GridZone[] | null {
   return zones
 }
 
+/**
+ * True when the grid point at the top-left corner of cell (row, col) is a `+`
+ * crossing: four distinct zone edges meet there. Deviation from FancyZones:
+ * resizer runs BREAK at crossings, so collinear edges that belong to different
+ * columns (or rows) resize independently. T-junctions stay whole — one zone
+ * owns the full edge and must move as a unit.
+ */
+function isCrossing(grid: number[][], row: number, col: number): boolean {
+  const topLeft = grid[row - 1][col - 1]
+  const topRight = grid[row - 1][col]
+  const bottomLeft = grid[row][col - 1]
+  const bottomRight = grid[row][col]
+
+  return topLeft !== topRight && bottomLeft !== bottomRight && topLeft !== bottomLeft && topRight !== bottomRight
+}
+
 export function modelToResizers(model: GridLayout): GridResizer[] {
   const grid = model.cellChildMap
   const { rows, columns: cols } = model
@@ -192,7 +210,11 @@ export function modelToResizers(model: GridLayout): GridResizer[] {
       if (grid[row - 1][startCol] !== grid[row][startCol]) {
         let endCol = startCol
 
-        while (endCol + 1 < cols && grid[row - 1][endCol + 1] !== grid[row][endCol + 1]) {
+        while (
+          endCol + 1 < cols &&
+          grid[row - 1][endCol + 1] !== grid[row][endCol + 1] &&
+          !isCrossing(grid, row, endCol + 1)
+        ) {
           endCol++
         }
 
@@ -223,7 +245,11 @@ export function modelToResizers(model: GridLayout): GridResizer[] {
       if (grid[startRow][col - 1] !== grid[startRow][col]) {
         let endRow = startRow
 
-        while (endRow + 1 < rows && grid[endRow + 1][col - 1] !== grid[endRow + 1][col]) {
+        while (
+          endRow + 1 < rows &&
+          grid[endRow + 1][col - 1] !== grid[endRow + 1][col] &&
+          !isCrossing(grid, endRow + 1, col)
+        ) {
           endRow++
         }
 
