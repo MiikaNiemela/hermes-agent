@@ -452,6 +452,41 @@ export function splitZone(
 // Resizer drag (GridData.CanDrag / Drag)
 // ---------------------------------------------------------------------------
 
+/** Identity of a resizer that survives grid rebuilds: zone indices are stable
+ *  across drags (zonesToModel keeps zone order), resizer LIST POSITIONS are not —
+ *  moving an edge past another track reorders the scan. */
+export interface ResizerKey {
+  orientation: GridResizer['orientation']
+  negativeSideIndices: number[]
+  positiveSideIndices: number[]
+}
+
+const sortedIds = (ids: number[]) => [...ids].sort((a, b) => a - b)
+
+export function resizerKey(resizer: GridResizer): ResizerKey {
+  return {
+    orientation: resizer.orientation,
+    negativeSideIndices: sortedIds(resizer.negativeSideIndices),
+    positiveSideIndices: sortedIds(resizer.positiveSideIndices)
+  }
+}
+
+/** Current list index of the resizer `key` names, or -1 when it no longer exists. */
+export function findResizerIndex(model: GridLayout, key: ResizerKey): number {
+  const sameIds = (a: number[], b: number[]) => {
+    const s = sortedIds(a)
+
+    return s.length === b.length && s.every((id, i) => id === b[i])
+  }
+
+  return modelToResizers(model).findIndex(
+    r =>
+      r.orientation === key.orientation &&
+      sameIds(r.negativeSideIndices, key.negativeSideIndices) &&
+      sameIds(r.positiveSideIndices, key.positiveSideIndices)
+  )
+}
+
 export function canDrag(model: GridLayout, resizerIndex: number, delta: number): boolean {
   const zones = modelToZones(model)
   const resizers = modelToResizers(model)
