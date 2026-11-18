@@ -103,6 +103,27 @@ def _check_kanban_orchestrator_mode() -> bool:
     return _visible(to_env_worker=False)
 
 
+def _owner_comment_unblock_target() -> Optional[str]:
+    """The card this dispatcher-owned worker may unblock: set only while it runs an owner-comment
+    handoff card (``hermes_cli.kanban_owner_comment``), and only that card's target."""
+    own = owned_kanban_task()
+    if not own or _is_delegated_child_context():
+        return None
+    try:
+        from hermes_cli import kanban_owner_comment as koc
+        with _board(None, quiet_close=True) as (_kb, conn):
+            return koc.granted_unblock_target(conn, own)
+    except Exception:  # health: allow BLE001 -- an unreadable board grants nothing (fail closed)
+        logger.debug("owner-comment unblock grant: board read failed", exc_info=True)
+        return None
+
+
+@no_cache_check_fn
+def _check_kanban_unblock_mode() -> bool:
+    """``kanban_unblock``: orchestrators, plus the one worker holding an owner-comment grant."""
+    return _check_kanban_orchestrator_mode() or _owner_comment_unblock_target() is not None
+
+
 # --- Shared helpers: validation failures raise _Reject; _kanban_handler renders it ---
 
 # Worker tools that terminate or transition a run's ownership. An unbound worker
@@ -1130,6 +1151,9 @@ def _handle_create(args: dict, **kw) -> str:
     model_override, provider_override = args.get("model"), args.get("provider")
     _check(model_override or not provider_override, "'provider' requires 'model' to be set as well")
     parents = _coerce_str_list(args.get("parents") or [], "parents", "task ids")
+    from hermes_cli.kanban_owner_comment import HANDOFF_KEY_PREFIX
+    _check(not str(args.get("idempotency_key") or "").startswith(HANDOFF_KEY_PREFIX),
+           f"idempotency keys starting with {HANDOFF_KEY_PREFIX!r} are reserved for owner-comment handoffs")
     with _board(args.get("board")) as (kb, conn):
         from gateway.session_context import get_session_env
         from tools.async_delegation import _current_origin_session_id
@@ -1279,11 +1303,15 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
 def _handle_unblock(args: dict, **kw) -> str:
     """Transition a blocked task to ready, or todo while parents remain open."""
     _reject_delegated_child_mutation("kanban_unblock")
-    _require_orchestrator_tool("kanban_unblock")
     tid = args.get("task_id")
     _check(tid, "task_id is required")
     tid = str(tid)
-    _enforce_worker_task_ownership(tid)
+    granted = _owner_comment_unblock_target() if os.environ.get("HERMES_KANBAN_TASK") else None
+    if granted is None:
+        _require_orchestrator_tool("kanban_unblock")
+        _enforce_worker_task_ownership(tid)
+    else:
+        _check(tid == granted, f"this owner-comment handoff may unblock only {granted}, not {tid}")
     with _board(args.get("board")) as (kb, conn):
         _check(kb.unblock_task(conn, tid), f"could not unblock {tid} (not blocked or unknown)")
         return _ok(task_id=tid, **_fields(kb.get_task(conn, tid), ("status",)))
@@ -1328,7 +1356,8 @@ _TOOLS = (
     ("kanban_link", KANBAN_LINK_SCHEMA, _handle_link, "🔗"))
 
 for _name, _sch, _handler, _emoji in _TOOLS:
-    _gate = _check_kanban_orchestrator_mode if _name in _ORCHESTRATOR_TOOLS else _check_kanban_mode
+    _gate = (_check_kanban_unblock_mode if _name == "kanban_unblock" else
+             _check_kanban_orchestrator_mode if _name in _ORCHESTRATOR_TOOLS else _check_kanban_mode)
     registry.register(name=_name, toolset="kanban", schema=_sch, handler=_handler, emoji=_emoji,
                       check_fn=_gate, compat_args=_UNDECLARED_ARGS.get(_name, ()),
                       # _kanban_handler rejects unknown keys before anything else and each handler

@@ -764,6 +764,31 @@ The orchestrator guidance ships in the worker's system prompt automatically — 
 
 For best results, pair it with a profile whose toolsets are restricted to board operations (`kanban`, `gateway`, `memory`) so the orchestrator literally cannot execute implementation tasks even if it tries.
 
+### Owner comments on Blocked cards
+
+A card Blocked on `needs_input` waits for the owner, and the owner usually answers with a comment. With this opt-in the embedded dispatcher hands each such comment to one coordinator profile, so commenting is the only step the owner takes:
+
+```yaml
+kanban:
+  owner_comment_handoff:
+    enabled: true
+    coordinator: assistant-clara    # an existing profile; anything else leaves the feature off
+    boards: [default]               # boards whose comments are watched
+    owner_authors: [desktop, dashboard]
+    excerpt_chars: 240              # 40-500
+```
+
+On each tick, before it dispatches, the dispatcher reads new `commented` events past a durable cursor and creates **one** handoff card assigned to the coordinator for every comment that:
+
+- was posted through the dashboard/Desktop HTTP API (`POST /api/plugins/kanban/tasks/<id>/comments`, which needs the dashboard session token) under an `owner_authors` label that is not a profile name, and
+- landed on a card that was Blocked at that moment and is still Blocked.
+
+The handoff card carries the target card id, the comment id and a redacted, single-line excerpt (secrets and local paths removed, at most `excerpt_chars`); the comment body itself stays on the target card. The coordinator's worker reads the card with `kanban_show`, checks its parents, review gates and any credential or approval the block asked for, and either calls `kanban_unblock` on that one card or comments what is still missing. That worker may unblock exactly the card its handoff names: every other worker still has no `kanban_unblock`. Nothing is unblocked, moved or woken automatically.
+
+Each comment is handed off once. The handoff card and the cursor advance commit in one transaction, and the card's idempotency key (`owner-comment:<board>:<task>:<comment>`) is checked across every status, archived included, so a gateway restart or a replayed event creates no duplicate; a failed create rolls back and is retried on the next tick. The first tick on a board starts at the newest event, so enabling the feature never replays old comments. Agents cannot create keys with the reserved `owner-comment:` prefix through `kanban_create`.
+
+Limits: the author label is chosen by the HTTP client, so anyone holding the dashboard token counts as the owner, and a shell on the host can write the board directly (`hermes kanban comment`, SQLite); comments from those paths carry no dashboard marker and are ignored, but this is not an authentication boundary against local processes. The section is read at gateway start, and only the gateway-embedded dispatcher runs the handoff (not `hermes kanban daemon`).
+
 ## Dashboard (GUI)
 
 The `/kanban` CLI and slash command are enough to run the board headlessly, but a visual board is often the right interface for humans-in-the-loop: triage, cross-profile supervision, reading comment threads, and dragging cards between columns. Hermes ships this as a **bundled dashboard plugin** at `plugins/kanban/` — not a core feature, not a separate service — following the model laid out in [Extending the Dashboard](./extending-the-dashboard).
@@ -834,6 +859,7 @@ Config knobs (all under `kanban:` in `~/.hermes/config.yaml`):
 | `auto_subscribe_on_create` | `true` | When `kanban_create` runs inside a persistent gateway/TUI session, terminal events resume that originating agent with a synthetic status turn. Set to `false` for passive completion or to require explicit `kanban_notify-subscribe` calls. Independent of `auto_decompose`. |
 | `notify_in_gateway` | `true` | Poll and deliver Kanban subscriptions from this gateway. Set to `false` on profiles that own no notification subscriptions to stop the idle five-second notifier poll. Independent of `dispatch_in_gateway`; non-dispatch gateways may still own profile-specific delivery adapters. |
 | `done_sub_retention_days` | `30` | Notify subscriptions survive `done` (reopen-safe) and are removed on `archived`. The notifier GC purges subscriptions whose task has been `done` or `blocked` with no new events for this many days, bounding sub-table growth on boards that never archive. `0` disables the sweep. |
+| `owner_comment_handoff` | off | Wake a coordinator profile when the owner comments on a Blocked card. See [Owner comments on Blocked cards](#owner-comments-on-blocked-cards). |
 
 And the two auxiliary LLM slots:
 

@@ -1668,21 +1668,21 @@ def task_graph_context(conn: sqlite3.Connection, task_id: str) -> dict:
 
 # --- Comments & events ---
 
-def add_comment(conn: sqlite3.Connection, task_id: str, author: str, body: str) -> int:
+def add_comment(conn: sqlite3.Connection, task_id: str, author: str, body: str, *, via: Optional[str] = None) -> int:
+    """``via`` names the surface (``"dashboard"`` = the authenticated HTTP route) on the event."""
     if not body or not body.strip():
         raise ValueError("comment body is required")
     if not author or not author.strip():
         raise ValueError("comment author is required")
-    now = int(time.time())
-    # ``allow_nested=True``: graph builders (kanban_swarm blackboard seeding)
-    # compose comment writes under one outer commit.
+    # ``allow_nested=True``: graph builders (kanban_swarm blackboard seeding) compose under one outer commit.
     with write_txn(conn, allow_nested=True):
         _require_task(conn, task_id)
-        cur = conn.execute(
-            "INSERT INTO task_comments (task_id, author, body, created_at) "
-            "VALUES (?, ?, ?, ?)", (task_id, author.strip(), body.strip(), now),
-        )
-        _append_event(conn, task_id, "commented", {"author": author, "len": len(body)})
+        cur = conn.execute("INSERT INTO task_comments (task_id, author, body, created_at) VALUES (?, ?, ?, ?)",
+                           (task_id, author.strip(), body.strip(), int(time.time())))
+        # comment_id + the status at comment time let event consumers act on one exact comment.
+        payload = {"author": author, "len": len(body), "comment_id": int(cur.lastrowid or 0),
+                   "task_status": _task_status(conn, task_id), **({"via": via} if via else {})}
+        _append_event(conn, task_id, "commented", payload)
         return int(cur.lastrowid or 0)
 
 

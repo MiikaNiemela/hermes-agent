@@ -128,9 +128,11 @@ class _KanbanDispatcher:
 
     CORRUPT_BOARD_RETRY_AFTER_SECONDS = 300
 
-    def __init__(self, kb: Any, settings: _DispatcherSettings) -> None:
+    def __init__(self, kb: Any, settings: _DispatcherSettings, owner_comment: Any = None) -> None:
         self.kb = kb
         self.settings = settings
+        # ``kanban.owner_comment_handoff`` (``kanban_owner_comment.OwnerCommentSettings``); None = off.
+        self.owner_comment = owner_comment
         self.disabled_corrupt_boards: dict[str, tuple[tuple[str, int | None, int | None], float]] = {}
 
     def _board_slugs(self) -> list:
@@ -192,6 +194,7 @@ class _KanbanDispatcher:
             from hermes_cli import kanban_db as _kb
             with _kb.pin_first_board_resolution():
                 conn = _kbc().connect(board=slug)
+                self._owner_comment_handoff(conn, slug)
                 return _kbd().dispatch_once(conn, board=slug, **kwargs)
         except Exception as exc:
             if self.is_corrupt_board_db_error(exc):
@@ -211,6 +214,17 @@ class _KanbanDispatcher:
             if conn is not None:
                 with contextlib.suppress(Exception):
                     conn.close()
+
+    def _owner_comment_handoff(self, conn: Any, slug: str) -> None:
+        """Hand owner comments on Blocked cards to the coordinator before dispatch, so the
+        handoff card can be claimed in this same tick. A failure never blocks dispatch."""
+        if self.owner_comment is None or not self.owner_comment.enabled:
+            return
+        from hermes_cli import kanban_owner_comment as _koc
+        try:
+            _koc.run_owner_comment_handoff(conn, board=slug, settings=self.owner_comment)
+        except Exception:  # health: allow BLE001 -- a handoff failure must never stop dispatch
+            logger.exception("kanban owner-comment handoff: tick failed on board %s", slug)
 
     def tick_once(self) -> list[tuple[str, Optional[object]]]:
         """Run one dispatch_once per board. Returns (slug, result) pairs."""

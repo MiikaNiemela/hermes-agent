@@ -279,7 +279,14 @@ class GatewayKanbanWatchersMixin:
         bad_ticks = 0
         last_warn_at = 0
         results: Optional[list] = None
-        dispatcher = _KanbanDispatcher(_kb, settings)
+        from hermes_cli.kanban_owner_comment import resolve_settings as _owner_comment_settings
+        owner_comment = _owner_comment_settings(kanban_cfg)
+        for warning in owner_comment.warnings:
+            logger.warning("kanban dispatcher: %s", warning)
+        if owner_comment.enabled:
+            logger.info("kanban dispatcher: owner-comment handoff to %s on boards %s",
+                        owner_comment.coordinator, list(owner_comment.boards))
+        dispatcher = _KanbanDispatcher(_kb, settings, owner_comment)
 
         logger.info("kanban dispatcher: embedded in gateway (interval=%.1fs)", interval)
         while self._running:
