@@ -6,9 +6,11 @@ HTTP route (the surface Desktop uses), the real DB layer and the embedded dispat
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -107,6 +109,27 @@ def test_owner_comment_on_blocked_card_creates_one_bounded_handoff(client, setti
     assert "x" * 300 not in handoff.body
     # Never auto-processed: the target stays Blocked with its assignee untouched.
     assert target.status == "blocked" and target.assignee == "adrian"
+
+
+def test_comment_after_boot_before_first_tick_is_handed_off_once(client, settings):
+    """Regression: the first tick used to seed its cursor past a comment posted since boot."""
+    tid = _blocked_card()
+    _comment(client, tid, "calendar URL is in the vault entry 'calendar'")
+
+    created = _tick(settings)
+    assert len(created) == 1
+    assert [h.id for h in _handoffs() if h] == created
+    assert _tick(settings) == []
+
+
+def test_comments_from_before_boot_are_not_replayed(client, settings):
+    tid = _blocked_card()
+    _comment(client, tid, "an old answer from before the feature was enabled")
+    later_boot = dataclasses.replace(settings, enabled_at=int(time.time()) + 1)
+
+    assert _tick(later_boot) == []
+    _comment(client, tid, "a new answer after boot")
+    assert len(_tick(later_boot)) == 1
 
 
 def test_repeated_ticks_and_restart_never_duplicate(client, settings):

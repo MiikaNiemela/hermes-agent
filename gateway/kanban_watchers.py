@@ -270,6 +270,10 @@ class GatewayKanbanWatchersMixin:
         settings = _resolve_dispatcher_settings(kanban_cfg, _kb)
         interval = settings.interval
 
+        # Resolved before the start delay: its ``enabled_at`` is the owner-comment boundary.
+        from hermes_cli.kanban_owner_comment import resolve_settings as _owner_comment_settings
+        owner_comment = _owner_comment_settings(kanban_cfg)
+
         # Initial delay so adapters are wired before workers spawn (matches the notifier).
         await asyncio.sleep(5)
 
@@ -279,8 +283,6 @@ class GatewayKanbanWatchersMixin:
         bad_ticks = 0
         last_warn_at = 0
         results: Optional[list] = None
-        from hermes_cli.kanban_owner_comment import resolve_settings as _owner_comment_settings
-        owner_comment = _owner_comment_settings(kanban_cfg)
         for warning in owner_comment.warnings:
             logger.warning("kanban dispatcher: %s", warning)
         if owner_comment.enabled:

@@ -56,6 +56,9 @@ class OwnerCommentSettings:
     boards: tuple[str, ...] = ("default",)
     owner_authors: tuple[str, ...] = ("desktop", "dashboard")
     excerpt_chars: int = _EXCERPT_DEFAULT
+    # Unix seconds at boot: a board's first run hands off comments from this second on and skips
+    # older history, so a comment posted between boot and the first tick is never lost.
+    enabled_at: int = field(default=0, compare=False)
     warnings: tuple[str, ...] = field(default=(), compare=False)
 
 
@@ -90,6 +93,7 @@ def resolve_settings(kanban_cfg: Optional[Mapping[str, Any]]) -> OwnerCommentSet
         boards=_str_tuple(raw.get("boards"), ("default",)),
         owner_authors=_str_tuple(raw.get("owner_authors"), ("desktop", "dashboard")),
         excerpt_chars=min(max(excerpt, _EXCERPT_MIN), _EXCERPT_MAX),
+        enabled_at=int(time.time()),
     )
 
 
@@ -141,15 +145,19 @@ def _read_cursor(conn: sqlite3.Connection) -> Optional[int]:
     return None if row is None else int(row["last_event_id"])
 
 
-def _start_cursor(conn: sqlite3.Connection, kb: Any) -> None:
-    """First run on a board starts caught up: history is never replayed into handoffs."""
+def _start_cursor(conn: sqlite3.Connection, kb: Any, enabled_at: int) -> int:
+    """First run on a board: start just before the first event of the boot second, so history is
+    never replayed while comments posted since boot (before this first tick) still are."""
     with kb.write_txn(conn):
         conn.execute(_CURSOR_DDL)
         conn.execute(
             "INSERT OR IGNORE INTO kanban_event_cursors (consumer, last_event_id, updated_at) "
-            "VALUES (?, COALESCE((SELECT MAX(id) FROM task_events), 0), ?)",
-            (_CURSOR_CONSUMER, int(time.time())),
+            "VALUES (?, COALESCE((SELECT MAX(id) FROM task_events WHERE created_at < ?), 0), ?)",
+            (_CURSOR_CONSUMER, int(enabled_at), int(time.time())),
         )
+        row = conn.execute("SELECT last_event_id FROM kanban_event_cursors WHERE consumer = ?",
+                           (_CURSOR_CONSUMER,)).fetchone()
+    return int(row["last_event_id"])
 
 
 def _is_owner_comment(payload: Mapping[str, Any], settings: OwnerCommentSettings) -> bool:
@@ -229,8 +237,7 @@ def run_owner_comment_handoff(conn: sqlite3.Connection, *, board: str,
 
     cursor = _read_cursor(conn)
     if cursor is None:
-        _start_cursor(conn, kb)
-        return []
+        cursor = _start_cursor(conn, kb, settings.enabled_at)
     rows = conn.execute(
         "SELECT id, task_id, payload FROM task_events WHERE kind = 'commented' AND id > ? "
         "ORDER BY id ASC LIMIT ?", (cursor, _BATCH),
