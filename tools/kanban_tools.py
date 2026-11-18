@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Any, Callable, Optional
 
 from agent.delegation_context import owned_kanban_task
@@ -101,6 +101,27 @@ def _check_kanban_mode() -> bool:
 def _check_kanban_orchestrator_mode() -> bool:
     """Board-routing tools (kanban_list, kanban_unblock): hidden from task workers."""
     return _visible(to_env_worker=False)
+
+
+def _owner_comment_unblock_target() -> Optional[str]:
+    """The card this dispatcher-owned worker may unblock: set only while it runs an owner-comment
+    handoff card (``hermes_cli.kanban_owner_comment``), and only that card's target."""
+    own = owned_kanban_task()
+    if not own or _is_delegated_child_context():
+        return None
+    try:
+        from hermes_cli import kanban_owner_comment as koc
+        with _board(None, quiet_close=True) as (_kb, conn):
+            return koc.granted_unblock_target(conn, own)
+    except Exception:  # health: allow BLE001 -- an unreadable board grants nothing (fail closed)
+        logger.debug("owner-comment unblock grant: board read failed", exc_info=True)
+        return None
+
+
+@no_cache_check_fn
+def _check_kanban_unblock_mode() -> bool:
+    """``kanban_unblock``: orchestrators, plus the one worker holding an owner-comment grant."""
+    return _check_kanban_orchestrator_mode() or _owner_comment_unblock_target() is not None
 
 
 # --- Shared helpers: validation failures raise _Reject; _kanban_handler renders it ---
@@ -1095,18 +1116,17 @@ def _persisted_session_id(session_id: Optional[str]) -> Optional[str]:
     """Return a session id only when it is present in this profile's state.db."""
     if not session_id:
         return None
-    try:
-        from hermes_state import SessionDB
-        from hermes_constants import get_hermes_home
+    with ExitStack() as handles:
+        try:
+            from hermes_constants import get_hermes_home
+            from persistence_assembly import open_persistence_reader
 
-        state = SessionDB(db_path=get_hermes_home() / "state.db", read_only=True)
-    except Exception:  # state.db may not exist for a CLI/dashboard invocation
-        logger.debug("Could not open state.db to verify Kanban provenance", exc_info=True)
-        return None
-    try:
-        return session_id if state.get_session(session_id) else None
-    finally:
-        state.close()
+            state = handles.enter_context(open_persistence_reader(get_hermes_home()))
+            state.ready()
+        except Exception:  # state.db may not exist for a CLI/dashboard invocation
+            logger.debug("Could not open state.db to verify Kanban provenance", exc_info=True)
+            return None
+        return session_id if state.sessions.get(session_id) else None
 
 
 @_kanban_handler("kanban_create")
@@ -1131,6 +1151,9 @@ def _handle_create(args: dict, **kw) -> str:
     model_override, provider_override = args.get("model"), args.get("provider")
     _check(model_override or not provider_override, "'provider' requires 'model' to be set as well")
     parents = _coerce_str_list(args.get("parents") or [], "parents", "task ids")
+    from hermes_cli.kanban_owner_comment import HANDOFF_KEY_PREFIX
+    _check(not str(args.get("idempotency_key") or "").startswith(HANDOFF_KEY_PREFIX),
+           f"idempotency keys starting with {HANDOFF_KEY_PREFIX!r} are reserved for owner-comment handoffs")
     with _board(args.get("board")) as (kb, conn):
         from gateway.session_context import get_session_env
         from tools.async_delegation import _current_origin_session_id
@@ -1179,22 +1202,22 @@ def _live_tui_session_key(session_key: str, profile: Optional[str]) -> str:
     the dead key silently drops every later completion notification (#110068). Maps the key
     to its continuation tip via the session store's lineage walk. Best-effort, fail-open:
     any error (or an unresolvable key) returns *session_key* unchanged."""
-    db_path = None
+    home = None
     if profile and profile != "default":
         try:
             from pathlib import Path
             from hermes_cli.profiles import get_profile_dir, profile_exists
             if profile_exists(profile):
-                db_path = Path(get_profile_dir(profile)) / "state.db"
+                home = Path(get_profile_dir(profile))
         except Exception:
-            db_path = None
+            home = None
     try:
-        from hermes_state_registry import acquire, release_or_close
-        db = acquire(db_path)
+        from persistence_assembly import open_persistence, profile_scope
+        persistence = open_persistence(profile_scope(home=home))
         try:
-            return db.resolve_resume_session_id(session_key) or session_key
+            return persistence.lineage.resolve_resume_target(session_key) or session_key
         finally:
-            release_or_close(db)
+            persistence.close()
     except Exception:
         return session_key
 
@@ -1280,11 +1303,15 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
 def _handle_unblock(args: dict, **kw) -> str:
     """Transition a blocked task to ready, or todo while parents remain open."""
     _reject_delegated_child_mutation("kanban_unblock")
-    _require_orchestrator_tool("kanban_unblock")
     tid = args.get("task_id")
     _check(tid, "task_id is required")
     tid = str(tid)
-    _enforce_worker_task_ownership(tid)
+    granted = _owner_comment_unblock_target() if os.environ.get("HERMES_KANBAN_TASK") else None
+    if granted is None:
+        _require_orchestrator_tool("kanban_unblock")
+        _enforce_worker_task_ownership(tid)
+    else:
+        _check(tid == granted, f"this owner-comment handoff may unblock only {granted}, not {tid}")
     with _board(args.get("board")) as (kb, conn):
         _check(kb.unblock_task(conn, tid), f"could not unblock {tid} (not blocked or unknown)")
         return _ok(task_id=tid, **_fields(kb.get_task(conn, tid), ("status",)))
@@ -1329,7 +1356,8 @@ _TOOLS = (
     ("kanban_link", KANBAN_LINK_SCHEMA, _handle_link, "🔗"))
 
 for _name, _sch, _handler, _emoji in _TOOLS:
-    _gate = _check_kanban_orchestrator_mode if _name in _ORCHESTRATOR_TOOLS else _check_kanban_mode
+    _gate = (_check_kanban_unblock_mode if _name == "kanban_unblock" else
+             _check_kanban_orchestrator_mode if _name in _ORCHESTRATOR_TOOLS else _check_kanban_mode)
     registry.register(name=_name, toolset="kanban", schema=_sch, handler=_handler, emoji=_emoji,
                       check_fn=_gate, compat_args=_UNDECLARED_ARGS.get(_name, ()),
                       # _kanban_handler rejects unknown keys before anything else and each handler
